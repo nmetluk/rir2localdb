@@ -25,8 +25,7 @@
 - [x] Спецификации, ADR, скелет репозитория, каталог источников
   `src/rir2localdb/sources.py`, документация (`docs/`, 10 файлов + 5 ADR).
 
-**Stage 1: Core sync + minimal API — в работе. Шаги 1–2 закрыты,
-шаг 3 — скелет.**
+**Stage 1: Core sync + minimal API — в работе. Шаги 1–3 закрыты.**
 
 Сделано в текущей сессии (2026-05-17):
 
@@ -56,35 +55,35 @@
 - [x] `ruff format`, `ruff check`, `mypy src/` — все зелёные
   (RUF001/002/003 — омоглифы — отключены в `pyproject.toml`,
   это русскоязычные docstring'и by design).
-- [x] **Скелет шага 3** — `sync/fetcher.py` с контрактом:
-  - `FetchStatus` (`NEW`/`UPDATED`/`UNCHANGED`/`ERROR`),
-  - `PreviousFetchState` (что читаем из `sync_file`),
-  - `FetchResult` (что отдаём наружу — все поля для записи в
-    `sync_file` + `local_path` для парсера),
-  - `FetchError` (внутреннее, никогда не наружу из `fetch()`),
-  - `fetch()` + помощники `make_user_agent`, `make_http_client`,
-    `cache_path_for`, `_fetch_md5_sidecar`, `_conditional_get`,
-    `_retry_request` — все ``raise NotImplementedError`` с docstring'ами.
-  - Retry-политика зафиксирована: 3 попытки, backoff
-    ``min(2**attempt, 60)``, ретраим только 5xx / 429 / network errors,
-    4xx — без retry. Без `tenacity`.
-  - `config.Settings` расширен `data_dir` / `http_timeout` /
-    `http_max_connections` / `http_retries`.
-- [x] **Test-plan шага 3** — `tests/test_fetcher.py` со скелетами
-  9 сценариев (`raise NotImplementedError`), каждый помечает: какой
-  tier должен сработать, какие поля `FetchResult` ожидаются.
-- [x] Docs: переписана секция ARIN в `docs/01-data-sources.md`
-  (открытое / закрытое / стратегия Stage 2) — см. ниже «Открытые
-  вопросы #1».
+- [x] **Скелет шага 3** — `sync/fetcher.py` (типы, контракты, retry
+  policy) + 9 сценариев тестов с `raise NotImplementedError`.
+  Детали: `.claude/session-log/01-03-fetcher-skeleton.md`.
+- [x] **Реализация шага 3** — `sync/fetcher.py` целиком + тесты
+  9/9 зелёные. `_retry_request` обслуживает буферизованные запросы
+  (md5 sidecar), `_conditional_get` имеет собственный retry-loop для
+  стриминга тела (sha256 на лету, `.tmp` → `os.replace`). 304 несёт
+  обновлённые cache validators. Edge-case «md5 mismatch + 304» —
+  warning + trust server. `fetch()` никогда не raise'ит из-за
+  сети/HTTP — всё через `FetchResult.error`. Детали:
+  `.claude/session-log/01-03-fetcher-impl.md`.
+- [x] `config.Settings` расширен `data_dir` / `http_timeout` /
+  `http_max_connections` / `http_retries`.
+- [x] Docs: переписана секция ARIN в `docs/01-data-sources.md` —
+  IRR-only / Bulk Whois / hybrid plan на Stage 2 (см. «Открытые
+  вопросы #1»).
+- [x] `.claude/session-log/` — директория с правилами формата,
+  template'ом и двумя файлами под шаг 3 (skeleton + impl).
 
 Не сделано (ждёт следующих шагов Stage 1):
 
-- [ ] **Реализация** `sync/fetcher.py` — тело функций по скелету (шаг 3).
-- [ ] `sync/state.py`, `sync/orchestrator.py` (шаг 4 + 7).
+- [ ] `sync/state.py` (шаг 4) — CRUD над `sync_file`, маппинг
+  `FetchResult` ↔ колонки, парсинг HTTP-date.
 - [ ] `parsers/delegated.py` (шаг 5).
 - [ ] `etl/delegated_etl.py` (шаг 6).
-- [ ] CLI-команды `sync` / `status` / `migrate` / `gc` (шаг 7).
-- [ ] FastAPI `/v1/ip` / `/v1/asn` (шаг 8).
+- [ ] `sync/orchestrator.py` + CLI-команды `sync` / `status` /
+  `migrate` / `gc` (шаг 7); там же — integration smoke против
+  `ftp.ripe.net` в `tests/integration/`.
+- [ ] FastAPI `/v1/ip` / `/v1/asn` / `/v1/status` / `/v1/healthz` (шаг 8).
 - [ ] CI.
 
 ---
@@ -92,32 +91,36 @@
 ## Что делать дальше (Stage 1)
 
 Подробный список — `docs/08-roadmap.md` раздел «Stage 1». Кратко
-(шаги 1–2 закрыты; шаг 3 — скелет, ждёт реализации):
+(шаги 1–3 закрыты; актуальный ближайший — №4):
 
 1. ~~`alembic init` + миграция `0001_initial`.~~ ✅
 2. ~~Таблицы `sync_run`, `sync_file`, `ip_allocation`, `asn_allocation`.~~ ✅
-3. **`sync/fetcher.py` — реализация по скелету.** Контракты и
-   тест-сценарии уже зафиксированы в `src/rir2localdb/sync/fetcher.py`
-   и `tests/test_fetcher.py`. Что писать:
-   - `make_user_agent` / `make_http_client` / `cache_path_for` —
-     тривиально, по docstring'у.
-   - `_retry_request` — ручной цикл с `min(2**attempt, 60)` backoff,
-     ретраим только сеть / 5xx / 429.
-   - `_fetch_md5_sidecar` — get → парсинг 32-hex; 404 → `None`.
-   - `_conditional_get` — стрим тела через `client.stream()`,
-     `<path>.tmp` → `os.replace`, sha256 на лету.
-   - `fetch()` — оркестрирует tier 1 → 2 → 3, ловит `FetchError`
-     и превращает в `FetchResult(ERROR, error=...)`.
-   - Тесты — 9 сценариев из `tests/test_fetcher.py`, все через
-     `httpx.MockTransport`, без реального HTTPS.
-4. `sync/state.py` — CRUD над `sync_file`: чтение `PreviousFetchState`
-   по URL, запись результата `fetch()` обратно в строку (mapping
-   `FetchResult` → колонки + `last_run_id`).
+3. ~~`sync/fetcher.py` — реализация + 9 тестов через MockTransport.~~ ✅
+4. **`sync/state.py`** — CRUD над `sync_file`:
+   - `load_previous_state(session, url) -> PreviousFetchState | None`
+     — читает строку `sync_file`, собирает dataclass (или `None`,
+     если строки нет).
+   - `record_fetch_result(session, result, run_id) -> None` —
+     INSERT … ON CONFLICT UPDATE по `url`. Маппит поля
+     `FetchResult` в колонки `sync_file.last_*`.
+   - Парсинг `last_modified` (HTTP-date) → TZ-aware `datetime`
+     для колонки `TIMESTAMPTZ`: `email.utils.parsedate_to_datetime`,
+     на парсинг-ошибке — `None` + warning.
+   - Семантика UNCHANGED: не затирать `last_md5` / `last_sha256` /
+     `last_size`, обновлять только `last_fetched_at` + `last_run_id`
+     + `last_status`. Семантика NEW/UPDATED: записать всё. ERROR:
+     обновить `last_status` + `last_run_id` + `last_fetched_at`,
+     старые валидаторы не трогать (чтобы следующий run попробовал
+     conditional GET от того же базиса).
+   - Тесты — на testcontainers PostgreSQL (зависимость уже в
+     `pyproject.toml[dev]`); один контейнер на весь модуль через
+     pytest-фикстуру.
 5. `parsers/delegated.py` — итератор `DelegatedRecord` по пайп-формату
    (`docs/05-parsers.md`). Unit-тесты на фрагментах от каждого RIR.
 6. `etl/delegated_etl.py` — `COPY` в TEMP staging + UPSERT по
    натуральному ключу `(rir, family, start_text, value)`.
 7. `sync/orchestrator.py` + CLI-команды `sync`, `status`, `migrate`, `gc`.
+   Integration smoke против `ftp.ripe.net` в `tests/integration/`.
 8. Минимальный FastAPI: `GET /v1/ip/{addr}`, `GET /v1/asn/{num}`,
    `GET /v1/status`, `GET /v1/healthz`.
 
@@ -171,15 +174,18 @@ rir2localdb/
 │   └── adr/                            ← architecture decision records
 ├── src/rir2localdb/
 │   ├── sources.py                      ← каталог URL и форматов (готов)
-│   ├── config.py                       ← Settings (минимум: database_url)
+│   ├── config.py                       ← Settings (database_url + http_*/data_dir)
 │   ├── cli.py                          ← Typer-app, плейсхолдер
 │   ├── db/                             ← engine.py + models.Base (Base пуст)
-│   ├── sync/, parsers/, etl/, api/     ← TODO-стабы, наполняются в Stage 1
+│   ├── sync/fetcher.py                 ← реализован (шаг 3)
+│   ├── sync/state.py, sync/orchestrator.py, sync/catalog.py ← TODO-стабы
+│   ├── parsers/, etl/, api/            ← TODO-стабы, наполняются в Stage 1
 ├── alembic.ini                         ← конфиг Alembic (URL берётся из env)
 ├── migrations/                         ← Alembic, async-template
 │   ├── env.py                          ← интегрирован с config.Settings
 │   └── versions/0001_initial_schema.py ← миграция Stage 1
-├── tests/                              ← pytest, пока пусто
+├── tests/                              ← test_fetcher.py (9 кейсов), дальше +
+├── .claude/session-log/                ← по одному файлу на шаг Stage N
 ├── scripts/                            ← вспомогательные shell-скрипты
 ├── pyproject.toml                      ← деплой/зависимости + ruff/mypy
 ├── docker-compose.yml                  ← локальный Postgres
