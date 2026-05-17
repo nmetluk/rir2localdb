@@ -60,7 +60,10 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W", "N", "UP", "B", "SIM", "RUF"]
-ignore = ["E501"]  # line length — оставляем форматтеру
+# E501 — line length, отдаём форматтеру.
+# RUF001/002/003 — «омоглифы»: ругаются на кириллицу в docstring'ах
+# и комментариях; в этом проекте они на русском by design.
+ignore = ["E501", "RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.format]
 quote-style = "double"

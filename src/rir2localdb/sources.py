@@ -7,6 +7,7 @@ URL'ы и метаданные отсюда.
 Если у RIR изменился путь к файлу — правится только эта структура.
 Никакие константы URL'ов в коде вне этого файла недопустимы.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -25,18 +26,18 @@ class Rir(StrEnum):
 class Tier(StrEnum):
     """Слой данных. См. docs/01-data-sources.md."""
 
-    CORE = "core"          # delegated-extended, всегда включено
-    RICH = "rich"          # RPSL split dumps; RIPE / APNIC / AFRINIC
-    ARIN_RR = "arin-rr"    # public ARIN IRR dump
+    CORE = "core"  # delegated-extended, всегда включено
+    RICH = "rich"  # RPSL split dumps; RIPE / APNIC / AFRINIC
+    ARIN_RR = "arin-rr"  # public ARIN IRR dump
     ARIN_BULK = "arin-bulk"  # ARIN Bulk Whois, требует API-ключ
 
 
 class Format(StrEnum):
-    DELEGATED = "delegated"          # NRO pipe-format
-    RPSL = "rpsl"                    # whois RPSL text
-    RPSL_GZ = "rpsl-gz"              # gzipped RPSL
+    DELEGATED = "delegated"  # NRO pipe-format
+    RPSL = "rpsl"  # whois RPSL text
+    RPSL_GZ = "rpsl-gz"  # gzipped RPSL
     RPSL_SPLIT_GZ = "rpsl-split-gz"  # gzipped RPSL, один тип объекта в файле
-    MD5 = "md5"                      # checksum sidecar (не парсится, ис.для валидации)
+    MD5 = "md5"  # checksum sidecar (не парсится, ис.для валидации)
 
 
 @dataclass(frozen=True)
@@ -89,28 +90,43 @@ _RIPE_DELEGATED = "https://ftp.ripe.net/pub/stats/ripencc/delegated-ripencc-exte
 
 CORE_SOURCES: Final[tuple[Source, ...]] = (
     Source(
-        rir=Rir.AFRINIC, tier=Tier.CORE, format=Format.DELEGATED,
-        url=_AFRINIC_DELEGATED, md5_url=_AFRINIC_DELEGATED + ".md5",
+        rir=Rir.AFRINIC,
+        tier=Tier.CORE,
+        format=Format.DELEGATED,
+        url=_AFRINIC_DELEGATED,
+        md5_url=_AFRINIC_DELEGATED + ".md5",
         description="AFRINIC delegated-extended (daily)",
     ),
     Source(
-        rir=Rir.APNIC, tier=Tier.CORE, format=Format.DELEGATED,
-        url=_APNIC_DELEGATED, md5_url=_APNIC_DELEGATED + ".md5",
+        rir=Rir.APNIC,
+        tier=Tier.CORE,
+        format=Format.DELEGATED,
+        url=_APNIC_DELEGATED,
+        md5_url=_APNIC_DELEGATED + ".md5",
         description="APNIC delegated-extended (daily)",
     ),
     Source(
-        rir=Rir.ARIN, tier=Tier.CORE, format=Format.DELEGATED,
-        url=_ARIN_DELEGATED, md5_url=_ARIN_DELEGATED + ".md5",
+        rir=Rir.ARIN,
+        tier=Tier.CORE,
+        format=Format.DELEGATED,
+        url=_ARIN_DELEGATED,
+        md5_url=_ARIN_DELEGATED + ".md5",
         description="ARIN delegated-extended (daily)",
     ),
     Source(
-        rir=Rir.LACNIC, tier=Tier.CORE, format=Format.DELEGATED,
-        url=_LACNIC_DELEGATED, md5_url=_LACNIC_DELEGATED + ".md5",
+        rir=Rir.LACNIC,
+        tier=Tier.CORE,
+        format=Format.DELEGATED,
+        url=_LACNIC_DELEGATED,
+        md5_url=_LACNIC_DELEGATED + ".md5",
         description="LACNIC delegated-extended (daily)",
     ),
     Source(
-        rir=Rir.RIPE, tier=Tier.CORE, format=Format.DELEGATED,
-        url=_RIPE_DELEGATED, md5_url=_RIPE_DELEGATED + ".md5",
+        rir=Rir.RIPE,
+        tier=Tier.CORE,
+        format=Format.DELEGATED,
+        url=_RIPE_DELEGATED,
+        md5_url=_RIPE_DELEGATED + ".md5",
         description="RIPE NCC delegated-extended (daily)",
     ),
 )
@@ -126,32 +142,32 @@ _RIPE_DBASE = "https://ftp.ripe.net/ripe/dbase/split"
 
 _RIPE_OBJECT_FILES = (
     # (object_type, filename)
-    ("inetnum",       "ripe.db.inetnum.utf8.gz"),
-    ("inet6num",      "ripe.db.inet6num.utf8.gz"),
-    ("aut-num",       "ripe.db.aut-num.utf8.gz"),
-    ("organisation",  "ripe.db.organisation.utf8.gz"),
-    ("route",         "ripe.db.route.utf8.gz"),
-    ("route6",        "ripe.db.route6.utf8.gz"),
-    ("as-block",      "ripe.db.as-block.utf8.gz"),
-    ("as-set",        "ripe.db.as-set.utf8.gz"),
-    ("mntner",        "ripe.db.mntner.utf8.gz"),
-    ("role",          "ripe.db.role.utf8.gz"),
-    ("irt",           "ripe.db.irt.utf8.gz"),
+    ("inetnum", "ripe.db.inetnum.utf8.gz"),
+    ("inet6num", "ripe.db.inet6num.utf8.gz"),
+    ("aut-num", "ripe.db.aut-num.utf8.gz"),
+    ("organisation", "ripe.db.organisation.utf8.gz"),
+    ("route", "ripe.db.route.utf8.gz"),
+    ("route6", "ripe.db.route6.utf8.gz"),
+    ("as-block", "ripe.db.as-block.utf8.gz"),
+    ("as-set", "ripe.db.as-set.utf8.gz"),
+    ("mntner", "ripe.db.mntner.utf8.gz"),
+    ("role", "ripe.db.role.utf8.gz"),
+    ("irt", "ripe.db.irt.utf8.gz"),
 )
 
 _APNIC_DBASE = "https://ftp.apnic.net/pub/apnic/whois"
 _APNIC_OBJECT_FILES = (
-    ("inetnum",       "apnic.db.inetnum.gz"),
-    ("inet6num",      "apnic.db.inet6num.gz"),
-    ("aut-num",       "apnic.db.aut-num.gz"),
-    ("organisation",  "apnic.db.organisation.gz"),
-    ("route",         "apnic.db.route.gz"),
-    ("route6",        "apnic.db.route6.gz"),
-    ("as-block",      "apnic.db.as-block.gz"),
-    ("as-set",        "apnic.db.as-set.gz"),
-    ("mntner",        "apnic.db.mntner.gz"),
-    ("role",          "apnic.db.role.gz"),
-    ("irt",           "apnic.db.irt.gz"),
+    ("inetnum", "apnic.db.inetnum.gz"),
+    ("inet6num", "apnic.db.inet6num.gz"),
+    ("aut-num", "apnic.db.aut-num.gz"),
+    ("organisation", "apnic.db.organisation.gz"),
+    ("route", "apnic.db.route.gz"),
+    ("route6", "apnic.db.route6.gz"),
+    ("as-block", "apnic.db.as-block.gz"),
+    ("as-set", "apnic.db.as-set.gz"),
+    ("mntner", "apnic.db.mntner.gz"),
+    ("role", "apnic.db.role.gz"),
+    ("irt", "apnic.db.irt.gz"),
 )
 
 # AFRINIC отдаёт всё одним файлом, без split'а
@@ -164,7 +180,9 @@ def _make_rich_sources() -> tuple[Source, ...]:
     for obj_type, fname in _RIPE_OBJECT_FILES:
         items.append(
             Source(
-                rir=Rir.RIPE, tier=Tier.RICH, format=Format.RPSL_SPLIT_GZ,
+                rir=Rir.RIPE,
+                tier=Tier.RICH,
+                format=Format.RPSL_SPLIT_GZ,
                 url=f"{_RIPE_DBASE}/{fname}",
                 object_type=obj_type,
                 description=f"RIPE {obj_type} dump",
@@ -175,7 +193,9 @@ def _make_rich_sources() -> tuple[Source, ...]:
     for obj_type, fname in _APNIC_OBJECT_FILES:
         items.append(
             Source(
-                rir=Rir.APNIC, tier=Tier.RICH, format=Format.RPSL_SPLIT_GZ,
+                rir=Rir.APNIC,
+                tier=Tier.RICH,
+                format=Format.RPSL_SPLIT_GZ,
                 url=f"{_APNIC_DBASE}/{fname}",
                 object_type=obj_type,
                 description=f"APNIC {obj_type} dump",
@@ -184,7 +204,9 @@ def _make_rich_sources() -> tuple[Source, ...]:
 
     items.append(
         Source(
-            rir=Rir.AFRINIC, tier=Tier.RICH, format=Format.RPSL_GZ,
+            rir=Rir.AFRINIC,
+            tier=Tier.RICH,
+            format=Format.RPSL_GZ,
             url=f"{_AFRINIC_DBASE}/afrinic.db.gz",
             object_type=None,  # все типы в одном файле
             description="AFRINIC combined RPSL dump",
@@ -203,7 +225,9 @@ RICH_SOURCES: Final[tuple[Source, ...]] = _make_rich_sources()
 
 ARIN_RR_SOURCES: Final[tuple[Source, ...]] = (
     Source(
-        rir=Rir.ARIN, tier=Tier.ARIN_RR, format=Format.RPSL_GZ,
+        rir=Rir.ARIN,
+        tier=Tier.ARIN_RR,
+        format=Format.RPSL_GZ,
         url="https://ftp.arin.net/pub/rr/arin.db.gz",
         description="ARIN IRR RPSL dump (routing only, not whois)",
     ),
@@ -239,7 +263,4 @@ def sources_for_tiers(tiers: set[Tier]) -> tuple[Source, ...]:
 
 def sources_by_rir(rir: Rir, tier: Tier | None = None) -> tuple[Source, ...]:
     """Все источники одного RIR, опционально с фильтром по tier'у."""
-    return tuple(
-        s for s in ALL_SOURCES
-        if s.rir == rir and (tier is None or s.tier == tier)
-    )
+    return tuple(s for s in ALL_SOURCES if s.rir == rir and (tier is None or s.tier == tier))
