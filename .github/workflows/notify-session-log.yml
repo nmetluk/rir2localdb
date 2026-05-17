@@ -22,9 +22,9 @@ jobs:
           before="${{ github.event.before }}"
           after="${{ github.event.after }}"
           if [ -z "$before" ] || [ "$before" = "0000000000000000000000000000000000000000" ]; then
-            files=$(git ls-tree -r --name-only "$after" -- .claude/session-log | grep '\.md$' | grep -v README || true)
+            files=$(git ls-tree -r --name-only "$after" -- .claude/session-log | grep '\.md$' | grep -v README | grep -v _template || true)
           else
-            files=$(git diff --name-only --diff-filter=AM "$before" "$after" -- '.claude/session-log/*.md' | grep -v README || true)
+            files=$(git diff --name-only --diff-filter=AM "$before" "$after" -- '.claude/session-log/*.md' | grep -v README | grep -v _template || true)
           fi
           latest=$(echo "$files" | sort -r | head -n1)
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
