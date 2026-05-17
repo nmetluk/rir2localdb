@@ -25,7 +25,7 @@
 - [x] Спецификации, ADR, скелет репозитория, каталог источников
   `src/rir2localdb/sources.py`, документация (`docs/`, 10 файлов + 5 ADR).
 
-**Stage 1: Core sync + minimal API — в работе. Шаги 1–5 закрыты.**
+**Stage 1: Core sync + minimal API — в работе. Шаги 1–6 закрыты.**
 
 Сделано в текущей сессии (2026-05-17):
 
@@ -84,6 +84,22 @@
   `"00000000"` → `None`. 17 тестов: 5 параметризованных RIR-фрагментов
   + 12 edge cases. Детали:
   `.claude/session-log/01-05-parsers-delegated.md`.
+- [x] **Шаг 6 — `etl/delegated_etl.py`** (двухходовой: skeleton + impl):
+  - 6a (skeleton, `2a058db`): типы, контракты, helper-сигнатуры с
+    `raise NotImplementedError`; Q1–Q5 согласованы (raw
+    `asyncpg.Connection`, TEMP-staging с ON COMMIT DROP, одна
+    публичная функция, маппинг в Python, без stale-GC).
+    Детали: `01-06a-etl-skeleton-confirmed.md`.
+  - 6b (impl, `cb98034` + `a37fb14`): тела `_record_to_*_row`,
+    `_create_staging_tables`, `_upsert_*_from_staging`,
+    `apply_delegated_etl`. SQL в `Final[str]`-константах.
+    `first_seen_run` preserve через отсутствие в SET. Подсчёт
+    inserted-vs-updated через `RETURNING (xmax = 0)`. 13 тестов
+    на `pg_conn`/`pg_sync_run_id` (raw asyncpg-фикстуры).
+    Детали: `01-06b-etl-delegated-impl.md`.
+  - Workflow rule: в `.claude/WORKFLOW.md` зафиксирован паттерн
+    «двухходовой шаг = два session-log» (`NN-MMa` skeleton +
+    `NN-MMb` impl).
 - [x] **Шаг 4 — `sync/state.py`**:
   - `FetchResult.tier_used: int | None` (Q1) — explicit tier signal
     для state.py; обновил fetcher + 9 тестов + docs/04.
@@ -106,7 +122,6 @@
 
 Не сделано (ждёт следующих шагов Stage 1):
 
-- [ ] `etl/delegated_etl.py` (шаг 6).
 - [ ] `sync/orchestrator.py` + CLI-команды `sync` / `status` /
   `migrate` / `gc` (шаг 7); там же — integration smoke против
   `ftp.ripe.net` в `tests/integration/`.
@@ -118,29 +133,30 @@
 ## Что делать дальше (Stage 1)
 
 Подробный список — `docs/08-roadmap.md` раздел «Stage 1». Кратко
-(шаги 1–5 закрыты; актуальный ближайший — №6):
+(шаги 1–6 закрыты; актуальный ближайший — №7):
 
 1. ~~`alembic init` + миграция `0001_initial`.~~ ✅
 2. ~~Таблицы `sync_run`, `sync_file`, `ip_allocation`, `asn_allocation`.~~ ✅
 3. ~~`sync/fetcher.py` — реализация + 9 тестов через MockTransport.~~ ✅
 4. ~~`sync/state.py` — CRUD над `sync_file`, 10 тестов.~~ ✅
 5. ~~`parsers/delegated.py` — NRO pipe-format iterator, 17 тестов.~~ ✅
-6. **`etl/delegated_etl.py`**:
-   - Принимает `Iterator[DelegatedRecord]` + async `Connection` + `run_id`.
-   - `COPY` записей в TEMP staging-таблицы (одна для ip, одна для asn)
-     через `asyncpg.connection.copy_records_to_table`.
-   - Маппинг `DelegatedRecord` → staging:
-     - `type='ipv4'` → `family=4`, `range_v4=int8range(start_int, start_int+value)`,
-       `start_text=INET(start)`.
-     - `type='ipv6'` → `family=6`, `range_v6=numrange(start_big, start_big + 2**(128-value))`.
-     - `type='asn'` → отдельная staging-таблица, `asn_range=int8range(start, start+value)`.
-   - `INSERT … ON CONFLICT (rir, family, start_text, value) DO UPDATE`
-     (и аналогично для asn) из staging → основных таблиц. Обновляет
-     `last_seen_run`, сохраняет `first_seen_run` через `COALESCE`.
-   - Тесты на testcontainers PostgreSQL? Или на той же
-     `rir2localdb_test`? — обсудить в Q-блоке шага 6.
-7. `sync/orchestrator.py` + CLI-команды `sync`, `status`, `migrate`, `gc`.
-   Integration smoke против `ftp.ripe.net` в `tests/integration/`.
+6. ~~`etl/delegated_etl.py` — staging COPY + ON CONFLICT UPSERT, 13 тестов.~~ ✅
+7. **`sync/orchestrator.py` + CLI**:
+   - `run_sync(tiers, settings) -> SyncRunSummary`:
+     - открыть `sync_run` (status='running'),
+     - `make_http_client(settings)` + asyncpg connection,
+     - для каждого `Source` из `sources_for_tiers(tiers)`:
+       - `read_previous_state(session, source.url)`,
+       - `fetch(client, source, previous, settings)`,
+       - `write_result(session, source, result, run_id)`,
+       - если `NEW`/`UPDATED`: `parse_delegated(result.local_path)` →
+         `apply_delegated_etl(conn, records, run_id)` →
+         `mark_parsed(session, url, now())`.
+     - закрыть `sync_run` (status='success'/'failed', stats=JSONB).
+   - CLI (Typer): `rir2localdb sync --tier core`, `status`,
+     `migrate up|down`, `gc --keep N`.
+   - Integration smoke против `ftp.ripe.net` в `tests/integration/`
+     с pytest-маркером `integration`.
 8. Минимальный FastAPI: `GET /v1/ip/{addr}`, `GET /v1/asn/{num}`,
    `GET /v1/status`, `GET /v1/healthz`.
 
@@ -202,12 +218,14 @@ rir2localdb/
 │   ├── sync/orchestrator.py, sync/catalog.py ← TODO-стабы
 │   ├── parsers/delegated.py            ← реализован (шаг 5)
 │   ├── parsers/rpsl.py                 ← TODO-стаб (Stage 2)
-│   ├── etl/, api/                      ← TODO-стабы, наполняются в Stage 1
+│   ├── etl/delegated_etl.py            ← реализован (шаг 6)
+│   ├── etl/rpsl_etl.py                 ← TODO-стаб (Stage 2)
+│   ├── api/                            ← TODO-стабы, наполняются в Stage 1
 ├── alembic.ini                         ← конфиг Alembic (URL берётся из env)
 ├── migrations/                         ← Alembic, async-template
 │   ├── env.py                          ← интегрирован с config.Settings
 │   └── versions/0001_initial_schema.py ← миграция Stage 1
-├── tests/                              ← fetcher + state + delegated_parser + conftest
+├── tests/                              ← fetcher + state + delegated_parser + delegated_etl + conftest
 ├── .claude/WORKFLOW.md                 ← методология (см. ADR-0006)
 ├── .claude/session-log/                ← по одному файлу на шаг Stage N
 ├── .github/workflows/                  ← notify-session-log.yml (Telegram)
