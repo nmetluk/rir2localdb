@@ -108,8 +108,7 @@ def parse_delegated(path: Path) -> Iterator[DelegatedRecord]:
             type_ = parts[2]
             if type_ not in _KNOWN_TYPES:
                 logger.warning(
-                    "delegated: unknown resource type %r at registry=%s, "
-                    "skipping; line=%r",
+                    "delegated: unknown resource type %r at registry=%s, skipping; line=%r",
                     type_,
                     parts[0],
                     line[:200],
