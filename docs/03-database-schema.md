@@ -185,9 +185,11 @@ CREATE INDEX ripe_inetnum_org        ON ripe_inetnum (org_handle);
 BEGIN;
 CREATE TEMP TABLE staging (LIKE ip_allocation INCLUDING ALL) ON COMMIT DROP;
 COPY staging FROM STDIN ... ;            -- через asyncpg.copy_records_to_table
--- UPSERT по натуральному ключу (rir, family, start_text):
+-- UPSERT по натуральному ключу (rir, family, start_text, value):
+-- смена value (размер блока) трактуется как новая аллокация,
+-- старая строка постепенно протухает через last_seen_run.
 INSERT INTO ip_allocation (...) SELECT ... FROM staging
-ON CONFLICT (rir, family, start_text)
+ON CONFLICT (rir, family, start_text, value)
 DO UPDATE SET ..., last_seen_run = EXCLUDED.last_seen_run;
 COMMIT;
 ```

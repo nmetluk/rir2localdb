@@ -14,7 +14,7 @@
 - Парсер delegated-extended (NRO format).
 - ETL: `COPY` во временную таблицу + atomic swap.
 - CLI `sync` / `status`.
-- API `GET /ip/{addr}` и `GET /asn/{num}` с базовыми полями.
+- API `GET /v1/ip/{addr}` и `GET /v1/asn/{num}` с базовыми полями.
 - Smoke-тесты, базовый CI.
 
 DoD: на чистой машине сценарий из README.md проходит end-to-end.

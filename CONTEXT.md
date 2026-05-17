@@ -52,7 +52,7 @@
 Подробный список — `docs/08-roadmap.md` раздел «Stage 1». Кратко:
 
 1. `alembic init migrations` → подложить наш `alembic.ini` и `env.py`.
-2. Написать первую миграцию: таблицы `sync_files`, `sync_runs`,
+2. Написать первую миграцию: таблицы `sync_run`, `sync_file`,
    `ip_allocation`, `asn_allocation` (см. `docs/03-database-schema.md`).
 3. Реализовать `sync/fetcher.py` — асинхронный HTTPS-загрузчик с
    условным GET (`If-Modified-Since` + ETag) и валидацией md5.
@@ -62,11 +62,11 @@
 6. Реализовать `etl/delegated_etl.py` — `COPY`-загрузка во временную
    таблицу + `INSERT ... ON CONFLICT` swap.
 7. CLI-команды `rir2localdb sync --tier core` и `rir2localdb status`.
-8. Минимальный API: `GET /ip/{addr}` и `GET /asn/{num}` поверх
+8. Минимальный API: `GET /v1/ip/{addr}` и `GET /v1/asn/{num}` поверх
    `ip_allocation` / `asn_allocation`.
 
 **Definition of Done для Stage 1:** на чистой машине проходит сценарий
-быстрого старта из `README.md`, `curl http://localhost:8000/ip/8.8.8.8`
+быстрого старта из `README.md`, `curl http://localhost:8000/v1/ip/8.8.8.8`
 возвращает корректный JSON с реестром, страной и статусом.
 
 ---
@@ -83,6 +83,13 @@
 3. **Что считать «whois-ответом» в API.** Минимум — поля из delegated
    stats. Максимум — слияние с RPSL inetnum/aut-num/organisation.
    В Stage 1 ограничиваемся минимумом, в Stage 2 расширяем.
+4. **`prefix_length` для IPv4 CIDR-aligned записей.** В миграции
+   колонка `ip_allocation.prefix_length` оставлена NULL для v4 (как
+   описано в `docs/03`). Когда `value` — степень двойки, блок
+   фактически выровнен по CIDR, и ETL мог бы вычислять и заполнять
+   `prefix_length` — это удобно для API и человеко-читаемого вывода.
+   Решение по Stage 2: вычислять в ETL (cheaper) или в API on-the-fly
+   (proще). Сейчас не нужно — задача ETL, не миграции.
 
 ---
 
