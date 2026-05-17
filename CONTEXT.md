@@ -22,48 +22,80 @@
 
 **Stage 0: Bootstrap & planning — завершён.**
 
-Сделано в текущей сессии:
+- [x] Спецификации, ADR, скелет репозитория, каталог источников
+  `src/rir2localdb/sources.py`, документация (`docs/`, 10 файлов + 5 ADR).
 
-- [x] Прочитаны спецификации форматов (NRO RIR-Statistics-Exchange-Format,
-  RIPE Database split files, ARIN Bulk Whois policy, LACNIC public data).
-- [x] Решены архитектурные вопросы: язык (Python 3.12), БД (PostgreSQL 16),
-  транспорт (HTTPS, не FTP), хранение диапазонов (`int8range` / `numrange`
-  с GiST), миграции (Alembic), API (FastAPI). См. `docs/adr/`.
-- [x] Создан скелет репозитория: `pyproject.toml`, `src/` layout, пустые
-  пакеты с `__init__.py`, `docker-compose.yml` для локального Postgres,
-  `.env.example`, `.gitignore`.
-- [x] Написан каталог источников `src/rir2localdb/sources.py` — это
-  **реальный** код с URL/метаданными, не заглушка. С него начинается
-  Stage 1.
-- [x] Написана вся документация в `docs/` (10 файлов + 5 ADR).
+**Stage 1: Core sync + minimal API — в работе. Шаг 1 завершён.**
 
-Не сделано (намеренно, ждёт Stage 1):
+Сделано в текущей сессии (2026-05-17):
 
-- [ ] Реализация модулей `sync/`, `parsers/`, `etl/`, `api/` —
-  сейчас это пустые `__init__.py` плюс однострочные TODO-стабы.
-- [ ] Миграции Alembic — каталог `migrations/` пуст, шаблон поднимается
-  одной командой `alembic init migrations`.
-- [ ] CI / тесты — каркас `tests/` есть, заполняется в Stage 1.
+- [x] `alembic init -t async migrations` + интеграция с пакетом:
+  `migrations/env.py` читает URL БД из `rir2localdb.config.Settings`
+  (а не из `alembic.ini`), `prepend_sys_path = src`.
+- [x] `src/rir2localdb/config.py` — минимальный `Settings`
+  (pydantic-settings, пока только `database_url`), фабрика
+  `get_settings()` с `lru_cache`.
+- [x] `src/rir2localdb/db/engine.py` — `make_engine` /
+  `make_sessionmaker` для async SQLAlchemy 2 + asyncpg.
+- [x] `src/rir2localdb/db/models.py` — пустой `Base(DeclarativeBase)`
+  (модели добавляем по мере появления ORM-потребителей).
+- [x] Миграция `migrations/versions/0001_initial_schema.py` —
+  таблицы `sync_run`, `sync_file`, `ip_allocation`, `asn_allocation`
+  с `int8range`/`numrange`, партиальными GiST-индексами, CHECK по
+  `family`, FK на `sync_run`, и уникальными индексами под натуральные
+  ключи (`(rir, family, start_text, value)` и `(rir, start_asn, count)`).
+- [x] Round-trip `upgrade head → downgrade base → upgrade head`
+  проходит на локальной БД без ошибок.
+- [x] `src/rir2localdb/cli.py` — `app = typer.Typer(...)`-плейсхолдер,
+  чтобы entry-point из `pyproject.toml` и `python -m rir2localdb`
+  резолвились в реальный объект. Команды наполняются в шаге §8.
+- [x] Docs hygiene: единая запись имён таблиц (ед. число), пример
+  UPSERT'а в `docs/03` использует полный натуральный ключ, `/v1/`
+  префикс везде где упоминаются эндпоинты.
+- [x] `ruff format`, `ruff check`, `mypy src/` — все зелёные
+  (RUF001/002/003 — омоглифы — отключены в `pyproject.toml`,
+  это русскоязычные docstring'и by design).
+
+Не сделано (ждёт следующих шагов Stage 1):
+
+- [ ] `sync/fetcher.py` — HTTPS-загрузчик с condиtional GET + md5 (шаг 3).
+- [ ] `sync/state.py`, `sync/orchestrator.py` (шаги 4, ETL).
+- [ ] `parsers/delegated.py` (шаг 5).
+- [ ] `etl/delegated_etl.py` (шаг 6).
+- [ ] CLI-команды `sync` / `status` / `migrate` / `gc` (шаг 7).
+- [ ] FastAPI `/v1/ip` / `/v1/asn` (шаг 8).
+- [ ] Тесты и CI.
 
 ---
 
 ## Что делать дальше (Stage 1)
 
-Подробный список — `docs/08-roadmap.md` раздел «Stage 1». Кратко:
+Подробный список — `docs/08-roadmap.md` раздел «Stage 1». Кратко
+(шаги 1–2 закрыты, актуальный ближайший — №3):
 
-1. `alembic init migrations` → подложить наш `alembic.ini` и `env.py`.
-2. Написать первую миграцию: таблицы `sync_run`, `sync_file`,
-   `ip_allocation`, `asn_allocation` (см. `docs/03-database-schema.md`).
-3. Реализовать `sync/fetcher.py` — асинхронный HTTPS-загрузчик с
-   условным GET (`If-Modified-Since` + ETag) и валидацией md5.
-4. Реализовать `sync/state.py` — учёт состояния каждого файла в БД.
-5. Реализовать `parsers/delegated.py` — парсер пайп-формата
-   (фактически 50 строк, см. `docs/05-parsers.md`).
-6. Реализовать `etl/delegated_etl.py` — `COPY`-загрузка во временную
-   таблицу + `INSERT ... ON CONFLICT` swap.
-7. CLI-команды `rir2localdb sync --tier core` и `rir2localdb status`.
-8. Минимальный API: `GET /v1/ip/{addr}` и `GET /v1/asn/{num}` поверх
-   `ip_allocation` / `asn_allocation`.
+1. ~~`alembic init` + миграция `0001_initial`.~~ ✅
+2. ~~Таблицы `sync_run`, `sync_file`, `ip_allocation`, `asn_allocation`.~~ ✅
+3. **`sync/fetcher.py`** — `fetch(source) -> FetchResult` поверх
+   `httpx.AsyncClient`: condиtional GET (`If-Modified-Since` + ETag),
+   валидация md5-соседа, потоковая запись в `${DATA_DIR}/raw/...`,
+   retry+backoff. См. `docs/04-sync-pipeline.md` § «Детекция изменений».
+   Заодно расширить `config.Settings` нужными полями (`data_dir`,
+   `http_timeout`, `http_retries`, `http_max_connections`).
+4. `sync/state.py` — CRUD над `sync_file`: загрузка прошлого
+   состояния по URL, апдейт после fetch'а.
+5. `parsers/delegated.py` — итератор `DelegatedRecord` по пайп-формату
+   (`docs/05-parsers.md`). Покрыть unit-тестами на фрагментах от
+   каждого из пяти RIR.
+6. `etl/delegated_etl.py` — `COPY` в TEMP staging + UPSERT по
+   натуральному ключу `(rir, family, start_text, value)`.
+7. `sync/orchestrator.py` + CLI-команды `sync`, `status`, `migrate`, `gc`.
+8. Минимальный FastAPI: `GET /v1/ip/{addr}`, `GET /v1/asn/{num}`,
+   `GET /v1/status`, `GET /v1/healthz`.
+
+**Прежде чем брать шаг 3:** перечитать `docs/04-sync-pipeline.md` и
+ADR-0003 (HTTPS, не FTP). Решить, где живёт `FetchResult` (вариант:
+`sync/types.py`) и как тестировать без сети (фейковые ответы через
+`httpx.MockTransport`).
 
 **Definition of Done для Stage 1:** на чистой машине проходит сценарий
 быстрого старта из `README.md`, `curl http://localhost:8000/v1/ip/8.8.8.8`
@@ -103,12 +135,17 @@ rir2localdb/
 │   └── adr/                            ← architecture decision records
 ├── src/rir2localdb/
 │   ├── sources.py                      ← каталог URL и форматов (готов)
-│   ├── config.py, cli.py               ← заглушки
-│   ├── db/, sync/, parsers/, etl/, api/  ← пустые модули, Stage 1
-├── migrations/                         ← Alembic, пока пусто
+│   ├── config.py                       ← Settings (минимум: database_url)
+│   ├── cli.py                          ← Typer-app, плейсхолдер
+│   ├── db/                             ← engine.py + models.Base (Base пуст)
+│   ├── sync/, parsers/, etl/, api/     ← TODO-стабы, наполняются в Stage 1
+├── alembic.ini                         ← конфиг Alembic (URL берётся из env)
+├── migrations/                         ← Alembic, async-template
+│   ├── env.py                          ← интегрирован с config.Settings
+│   └── versions/0001_initial_schema.py ← миграция Stage 1
 ├── tests/                              ← pytest, пока пусто
 ├── scripts/                            ← вспомогательные shell-скрипты
-├── pyproject.toml                      ← деплой/зависимости
+├── pyproject.toml                      ← деплой/зависимости + ruff/mypy
 ├── docker-compose.yml                  ← локальный Postgres
 └── .env.example                        ← образец переменных окружения
 ```
