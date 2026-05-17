@@ -5,69 +5,61 @@ on:
     branches: [main]
     paths:
       - '.claude/session-log/**'
+  workflow_dispatch:
 
 jobs:
   notify:
     runs-on: ubuntu-latest
+    env:
+      TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      REPO: ${{ github.repository }}
+      SHA: ${{ github.sha }}
+      EVENT_NAME: ${{ github.event_name }}
+      EVENT_BEFORE: ${{ github.event.before }}
+      EVENT_AFTER: ${{ github.event.after }}
     steps:
-      - name: checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 2
 
-      - name: find changed session-log files in this push
-        id: find
+      - name: build and send notification
         run: |
           set -e
-          before="${{ github.event.before }}"
-          after="${{ github.event.after }}"
-          if [ -z "$before" ] || [ "$before" = "0000000000000000000000000000000000000000" ]; then
-            files=$(git ls-tree -r --name-only "$after" -- .claude/session-log | grep '\.md$' | grep -v README | grep -v _template || true)
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            files=$(git ls-tree -r --name-only HEAD -- .claude/session-log/ | grep '\.md$' | grep -v README | grep -v _template || true)
+          elif [ -z "$EVENT_BEFORE" ] || [ "$EVENT_BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            files=$(git ls-tree -r --name-only "$EVENT_AFTER" -- .claude/session-log/ | grep '\.md$' | grep -v README | grep -v _template || true)
           else
-            files=$(git diff --name-only --diff-filter=AM "$before" "$after" -- '.claude/session-log/*.md' | grep -v README | grep -v _template || true)
+            files=$(git diff --name-only --diff-filter=AM "$EVENT_BEFORE" "$EVENT_AFTER" -- '.claude/session-log/*.md' | grep -v README | grep -v _template || true)
           fi
-          latest=$(echo "$files" | sort -r | head -n1)
-          echo "latest=$latest" >> "$GITHUB_OUTPUT"
-          echo "Found session-log: $latest"
 
-      - name: build message
-        id: msg
-        if: steps.find.outputs.latest != ''
-        run: |
-          file="${{ steps.find.outputs.latest }}"
-          repo="${{ github.repository }}"
-          sha_short=$(echo "${{ github.sha }}" | cut -c1-7)
-          commit_url="https://github.com/${repo}/commit/${{ github.sha }}"
-          file_url="https://github.com/${repo}/blob/main/${file}"
-
-          body=$(head -c 3500 "$file")
-          if [ "$(wc -c < "$file")" -gt 3500 ]; then
-            body="${body}
-
-…(обрезано, полностью: ${file_url})"
+          file=$(echo "$files" | sort -r | head -n1)
+          if [ -z "$file" ]; then
+            echo "No session-log changes in this push — nothing to notify."
+            exit 0
           fi
+          echo "Latest session-log: $file"
+
+          sha_short="${SHA:0:7}"
+          commit_url="https://github.com/${REPO}/commit/${SHA}"
+          file_url="https://github.com/${REPO}/blob/main/${file}"
+          msg=/tmp/tg-message.txt
 
           {
-            echo 'text<<EOF'
-            echo "🟢 *${repo}* — новый session-log"
-            echo ""
-            echo "[\`${sha_short}\`](${commit_url}) → [\`${file}\`](${file_url})"
-            echo ""
-            echo '```'
-            echo "$body"
-            echo '```'
-            echo EOF
-          } >> "$GITHUB_OUTPUT"
+            printf '🟢 <b>%s</b> — новый session-log\n\n' "$REPO"
+            printf '<a href="%s"><code>%s</code></a> → <a href="%s"><code>%s</code></a>\n\n' "$commit_url" "$sha_short" "$file_url" "$file"
+            printf '<pre>'
+            head -c 3500 "$file" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+            if [ "$(wc -c < "$file")" -gt 3500 ]; then
+              printf '\n\n…(truncated, full file: %s)' "$file_url"
+            fi
+            printf '</pre>\n'
+          } > "$msg"
 
-      - name: send to Telegram
-        if: steps.find.outputs.latest != ''
-        env:
-          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          TEXT: ${{ steps.msg.outputs.text }}
-        run: |
           curl -fsS "https://api.telegram.org/bot${TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${CHAT_ID}" \
-            --data-urlencode "parse_mode=Markdown" \
+            --data-urlencode "parse_mode=HTML" \
             --data-urlencode "disable_web_page_preview=true" \
-            --data-urlencode "text=${TEXT}"
+            --data-urlencode "text@${msg}"

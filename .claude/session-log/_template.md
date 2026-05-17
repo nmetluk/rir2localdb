@@ -1,5 +1,11 @@
 # Stage <N>, шаг <M>: <human title>
 
+<!--
+Тело session-log может содержать любые символы; нотификация в Telegram
+(.github/workflows/notify-session-log.yml) парсит как HTML и эскейпит
+только `& < >`, никакой bash expansion над содержимым нет.
+-->
+
 **Дата:** YYYY-MM-DD
 **Статус:** ✅ закрыт | ⚠️ частично | ❌ застрял
 **Коммиты:** `abc1234..def5678` (диапазон) или список SHA
