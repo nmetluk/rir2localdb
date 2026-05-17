@@ -72,12 +72,23 @@
 
 **Вход:** `Source` объекты из `sources.py`.
 
-**Выход:** локальные файлы на диске (или поток bytes) + строка в
-таблице `sync_file` с актуальным состоянием.
+**Выход:** локальные файлы на диске + строка в таблице `sync_file`
+с актуальным состоянием.
 
-**Контракт:** функция `fetch(source) -> FetchResult`, где
-`FetchResult` либо `Downloaded(path, sha256, size, fetched_at)`,
-либо `NotModified(last_known_sha256)`, либо `Failed(reason)`.
+Слой делится на два модуля:
+
+- **`sync/fetcher.py`** — HTTP-логика. Контракт:
+  `fetch(client, source, previous, settings) -> FetchResult`. Никогда
+  не пишет в БД; принимает `PreviousFetchState` от вызывающего кода
+  и возвращает `FetchResult` (см. `FetchStatus`:
+  `NEW` / `UPDATED` / `UNCHANGED` / `ERROR`). `FetchResult.tier_used`
+  ∈ {1, 2, 3} говорит, какой tier детекции закрыл запрос.
+- **`sync/state.py`** — персистентность. Контракт:
+  `read_previous_state(session, url) -> PreviousFetchState | None`,
+  `write_result(session, source, result, run_id) -> None`,
+  `mark_parsed(session, url, parsed_at) -> None`. Никаких HTTP-вызовов
+  или файловых операций. Правила UPSERT'а зависят от
+  `(status, tier_used)` и зафиксированы в docstring модуля.
 
 ### Parser layer
 

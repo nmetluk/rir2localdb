@@ -31,13 +31,16 @@
 ```sql
 CREATE TABLE sync_run (
     id            BIGSERIAL PRIMARY KEY,
-    tier          TEXT NOT NULL,            -- 'core' | 'rich' | 'arin-rr' | ...
+    tier          TEXT NOT NULL,            -- 'core' | 'rich' | 'arin-rr' | 'arin-bulk'
     started_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     finished_at   TIMESTAMPTZ,
-    status        TEXT NOT NULL,            -- 'running' | 'success' | 'failed' | 'partial'
+    status        TEXT NOT NULL,            -- 'running' | 'success' | 'failed'
     stats         JSONB NOT NULL DEFAULT '{}'::jsonb,
     error         TEXT
 );
+-- status: 3 значения. Партиальный индекс sync_run_status_partial_idx
+-- (см. migration 0001) опирается на 'running' и 'failed'. CHECK не
+-- ставим — расширение словаря возможно отдельной миграцией Stage 1.5.
 
 CREATE INDEX ON sync_run (started_at DESC);
 CREATE INDEX ON sync_run (status) WHERE status IN ('running', 'failed');
@@ -49,10 +52,12 @@ CREATE INDEX ON sync_run (status) WHERE status IN ('running', 'failed');
 CREATE TABLE sync_file (
     url             TEXT PRIMARY KEY,
     rir             TEXT NOT NULL,          -- 'afrinic' | 'apnic' | 'arin' | 'lacnic' | 'ripe'
-    tier            TEXT NOT NULL,
-    kind            TEXT NOT NULL,          -- 'delegated' | 'rpsl' | 'md5' | ...
+    tier            TEXT NOT NULL,          -- 'core' | 'rich' | 'arin-rr' | 'arin-bulk'
+    kind            TEXT NOT NULL,          -- значение `Source.format.value` из sources.py:
+                                            -- 'delegated' | 'rpsl' | 'rpsl-gz' | 'rpsl-split-gz' | 'md5'
     last_run_id     BIGINT REFERENCES sync_run(id),
-    last_status     TEXT NOT NULL,          -- 'fresh' | 'not_modified' | 'failed'
+    last_status     TEXT NOT NULL,          -- значение `FetchStatus.value` из sync/fetcher.py:
+                                            -- 'new' | 'updated' | 'unchanged' | 'error'
     last_etag       TEXT,
     last_modified   TIMESTAMPTZ,
     last_md5        TEXT,
@@ -61,6 +66,12 @@ CREATE TABLE sync_file (
     last_fetched_at TIMESTAMPTZ,
     last_parsed_at  TIMESTAMPTZ
 );
+-- Источник правды для словарей `kind` и `last_status` — соответствующие
+-- enum'ы в коде (`Format` и `FetchStatus`). CHECK constraint не ставим:
+-- расширение словаря (новый формат / новый статус) делается в коде, а
+-- БД накатывается следующей миграцией если нужно.
+-- Маппинг FetchResult → колонки sync_file (правила UPSERT по статусу
+-- и tier'у) — в src/rir2localdb/sync/state.py, docstring модуля.
 ```
 
 `url` как PK — потому что каноничный ключ источника. Если URL у

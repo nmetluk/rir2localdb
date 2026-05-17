@@ -2,6 +2,12 @@
 
 Как именно файл попадает с сервера RIR в БД.
 
+**Где живут детали:**
+- HTTP-логика и трёхуровневая детекция — `src/rir2localdb/sync/fetcher.py`.
+- Маппинг `FetchResult` → колонки `sync_file` (правила UPSERT по
+  статусу и `tier_used`) — `src/rir2localdb/sync/state.py`, docstring модуля.
+- Каталог источников — `src/rir2localdb/sources.py`.
+
 ## Транспорт: HTTPS, не FTP
 
 Все пять RIR'ов обслуживают одни и те же файлы по HTTPS на тех же
