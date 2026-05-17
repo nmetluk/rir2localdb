@@ -25,7 +25,7 @@
 - [x] Спецификации, ADR, скелет репозитория, каталог источников
   `src/rir2localdb/sources.py`, документация (`docs/`, 10 файлов + 5 ADR).
 
-**Stage 1: Core sync + minimal API — в работе. Шаги 1–3 закрыты.**
+**Stage 1: Core sync + minimal API — в работе. Шаги 1–4 закрыты.**
 
 Сделано в текущей сессии (2026-05-17):
 
@@ -73,11 +73,28 @@
   вопросы #1»).
 - [x] `.claude/session-log/` — директория с правилами формата,
   template'ом и двумя файлами под шаг 3 (skeleton + impl).
+- [x] **Шаг 4 — `sync/state.py`**:
+  - `FetchResult.tier_used: int | None` (Q1) — explicit tier signal
+    для state.py; обновил fetcher + 9 тестов + docs/04.
+  - ORM-модели `SyncFile` / `SyncRun` в `db/models.py`.
+  - `Settings.test_database_url` + `.env.example` + `.env` локально.
+  - `migrations/env.py` теперь уважает программный
+    `cfg.set_main_option("sqlalchemy.url", ...)`.
+  - `tests/conftest.py` — session-engine + per-test `db_session` с
+    rollback + `sync_run_id` factory. Тестовая БД `rir2localdb_test`
+    создана через `sudo -u postgres psql -c "CREATE DATABASE ..."`.
+  - `sync/state.py` — `read_previous_state` / `write_result` /
+    `mark_parsed` + HTTP-date helpers. Правила UPSERT'а по
+    `(status, tier_used)` в docstring модуля таблицей.
+  - 10 тестов state.py (8 на БД + 2 unit на HTTP-date), включая
+    Q4-проверку перекатегоризации tier'а.
+  - Docs: glossary в `docs/03` для `kind` / `last_status` /
+    `sync_run.status` (Q2/Q3); cross-ref в `docs/02` и `docs/04`.
+  - YAML fix в notify-session-log: `grep -v _template`.
+  - Детали: `.claude/session-log/01-04-sync-state.md`.
 
 Не сделано (ждёт следующих шагов Stage 1):
 
-- [ ] `sync/state.py` (шаг 4) — CRUD над `sync_file`, маппинг
-  `FetchResult` ↔ колонки, парсинг HTTP-date.
 - [ ] `parsers/delegated.py` (шаг 5).
 - [ ] `etl/delegated_etl.py` (шаг 6).
 - [ ] `sync/orchestrator.py` + CLI-команды `sync` / `status` /
@@ -91,32 +108,24 @@
 ## Что делать дальше (Stage 1)
 
 Подробный список — `docs/08-roadmap.md` раздел «Stage 1». Кратко
-(шаги 1–3 закрыты; актуальный ближайший — №4):
+(шаги 1–4 закрыты; актуальный ближайший — №5):
 
 1. ~~`alembic init` + миграция `0001_initial`.~~ ✅
 2. ~~Таблицы `sync_run`, `sync_file`, `ip_allocation`, `asn_allocation`.~~ ✅
 3. ~~`sync/fetcher.py` — реализация + 9 тестов через MockTransport.~~ ✅
-4. **`sync/state.py`** — CRUD над `sync_file`:
-   - `load_previous_state(session, url) -> PreviousFetchState | None`
-     — читает строку `sync_file`, собирает dataclass (или `None`,
-     если строки нет).
-   - `record_fetch_result(session, result, run_id) -> None` —
-     INSERT … ON CONFLICT UPDATE по `url`. Маппит поля
-     `FetchResult` в колонки `sync_file.last_*`.
-   - Парсинг `last_modified` (HTTP-date) → TZ-aware `datetime`
-     для колонки `TIMESTAMPTZ`: `email.utils.parsedate_to_datetime`,
-     на парсинг-ошибке — `None` + warning.
-   - Семантика UNCHANGED: не затирать `last_md5` / `last_sha256` /
-     `last_size`, обновлять только `last_fetched_at` + `last_run_id`
-     + `last_status`. Семантика NEW/UPDATED: записать всё. ERROR:
-     обновить `last_status` + `last_run_id` + `last_fetched_at`,
-     старые валидаторы не трогать (чтобы следующий run попробовал
-     conditional GET от того же базиса).
-   - Тесты — на testcontainers PostgreSQL (зависимость уже в
-     `pyproject.toml[dev]`); один контейнер на весь модуль через
-     pytest-фикстуру.
-5. `parsers/delegated.py` — итератор `DelegatedRecord` по пайп-формату
-   (`docs/05-parsers.md`). Unit-тесты на фрагментах от каждого RIR.
+4. ~~`sync/state.py` — CRUD над `sync_file`, 10 тестов.~~ ✅
+5. **`parsers/delegated.py`** — итератор `DelegatedRecord` по
+   NRO pipe-формату (`docs/05-parsers.md` § «Delegated-extended»).
+   Контракт:
+   - `parse_delegated(path: Path) -> Iterator[DelegatedRecord]`.
+   - `DelegatedRecord` (dataclass, frozen): registry, cc, type
+     ('asn'|'ipv4'|'ipv6'), start, value, date, status, opaque_id,
+     extensions.
+   - Парсер **никогда** не пишет в БД — чистый stream.
+   - Пропускает: comments (`#`), пустые строки, version line,
+     summary lines (`type=*`).
+   - Unit-тесты на фрагментах от каждого из пяти RIR + edge cases
+     (CRLF/LF, ZZ country code, неравные счётчики).
 6. `etl/delegated_etl.py` — `COPY` в TEMP staging + UPSERT по
    натуральному ключу `(rir, family, start_text, value)`.
 7. `sync/orchestrator.py` + CLI-команды `sync`, `status`, `migrate`, `gc`.
@@ -178,14 +187,16 @@ rir2localdb/
 │   ├── cli.py                          ← Typer-app, плейсхолдер
 │   ├── db/                             ← engine.py + models.Base (Base пуст)
 │   ├── sync/fetcher.py                 ← реализован (шаг 3)
-│   ├── sync/state.py, sync/orchestrator.py, sync/catalog.py ← TODO-стабы
+│   ├── sync/state.py                   ← реализован (шаг 4)
+│   ├── sync/orchestrator.py, sync/catalog.py ← TODO-стабы
 │   ├── parsers/, etl/, api/            ← TODO-стабы, наполняются в Stage 1
 ├── alembic.ini                         ← конфиг Alembic (URL берётся из env)
 ├── migrations/                         ← Alembic, async-template
 │   ├── env.py                          ← интегрирован с config.Settings
 │   └── versions/0001_initial_schema.py ← миграция Stage 1
-├── tests/                              ← test_fetcher.py (9 кейсов), дальше +
+├── tests/                              ← test_fetcher.py + test_state.py + conftest.py
 ├── .claude/session-log/                ← по одному файлу на шаг Stage N
+├── .github/workflows/                  ← notify-session-log.yml (Telegram)
 ├── scripts/                            ← вспомогательные shell-скрипты
 ├── pyproject.toml                      ← деплой/зависимости + ruff/mypy
 ├── docker-compose.yml                  ← локальный Postgres
