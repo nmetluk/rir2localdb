@@ -11,11 +11,24 @@
   Это безопасно делать в синхронном фикстур-сетапе: pytest ещё не
   запустил event loop, ``command.upgrade`` создаёт свой через
   ``asyncio.run`` в env.py.
-- ``db_session`` (function) — открывает соединение, начинает транзакцию,
-  даёт ``AsyncSession`` тесту, в teardown откатывает. Каждый тест
-  начинается со «свежей» БД без накладных расходов TRUNCATE.
-- ``sync_run_id`` (function) — фабрика для FK-зависимостей: вставляет
-  тестовую строку в ``sync_run`` и возвращает её id.
+
+Два независимых канала к БД:
+
+- **SQLAlchemy путь** (для ``sync/state.py``, OLTP-операции):
+  - ``db_session`` (function) — открывает соединение, начинает транзакцию,
+    даёт ``AsyncSession`` тесту, в teardown откатывает.
+  - ``sync_run_id`` (function) — фабрика на ``db_session``.
+- **Raw asyncpg путь** (для ``etl/*``, hot path по ADR-0005):
+  - ``pg_conn`` (function) — отдельный ``asyncpg.Connection`` в своей
+    транзакции с rollback'ом в teardown. Это другое физическое
+    соединение, чем ``db_session``: изменения, видимые одному,
+    невидимы другому. Оба независимо откатываются.
+  - ``pg_sync_run_id`` (function) — фабрика на ``pg_conn``.
+
+Тест не должен смешивать каналы (не использовать ``db_session`` и
+``pg_conn`` одновременно для одного логического тестового сценария) —
+из-за разных физических соединений написанное в одном не видно
+другому до коммита.
 """
 
 from __future__ import annotations
@@ -23,6 +36,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
+import asyncpg
 import pytest
 import pytest_asyncio
 from alembic import command
@@ -101,14 +115,48 @@ async def db_session(test_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
 
 @pytest_asyncio.fixture
 async def sync_run_id(db_session: AsyncSession) -> int:
-    """Вставить тестовый ``sync_run`` и вернуть его ``id``.
+    """Вставить тестовый ``sync_run`` через ``db_session`` и вернуть его ``id``.
 
     Любая ``sync_file``-строка ссылается на ``sync_run.id`` через FK,
-    поэтому для тестов state.py всегда нужен валидный run_id.
+    поэтому для тестов state.py всегда нужен валидный run_id. Для
+    ETL-тестов на raw asyncpg есть параллельный ``pg_sync_run_id``.
     """
     result = await db_session.execute(
         text("INSERT INTO sync_run (tier, status) VALUES ('core', 'running') RETURNING id")
     )
     rid = result.scalar_one()
     await db_session.flush()
+    return int(rid)
+
+
+@pytest_asyncio.fixture
+async def pg_conn(test_database_url: str) -> AsyncIterator[asyncpg.Connection]:
+    """Raw ``asyncpg.Connection`` в транзакции с rollback'ом в teardown.
+
+    Используется ETL-тестами (``apply_delegated_etl`` принимает именно
+    ``asyncpg.Connection``, ADR-0005 § hot path). Отдельное физ.соединение
+    от ``db_session`` — каждое со своим rollback'ом, без cross-видимости.
+    """
+    # asyncpg.connect не понимает SQLAlchemy-суффикс '+asyncpg'.
+    url = test_database_url.replace("+asyncpg", "")
+    conn = await asyncpg.connect(url)
+    txn = conn.transaction()
+    await txn.start()
+    try:
+        yield conn
+    finally:
+        await txn.rollback()
+        await conn.close()
+
+
+@pytest_asyncio.fixture
+async def pg_sync_run_id(pg_conn: asyncpg.Connection) -> int:
+    """``INSERT … RETURNING id`` в ``sync_run`` через ``pg_conn``.
+
+    Параллель ``sync_run_id``, но в asyncpg-транзакции — видимо для
+    ETL-операций, которые тоже идут через ``pg_conn``.
+    """
+    rid = await pg_conn.fetchval(
+        "INSERT INTO sync_run (tier, status) VALUES ('core', 'running') RETURNING id"
+    )
     return int(rid)
