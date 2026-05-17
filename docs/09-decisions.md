@@ -17,6 +17,9 @@ Records) в `docs/adr/`. Формат — лёгкий: контекст, реш
   HTTPS поверх ftp.* хостов, не FTP.
 - [`adr/0005-async-sqlalchemy.md`](adr/0005-async-sqlalchemy.md) —
   SQLAlchemy 2.x async + asyncpg, сырой SQL на горячих путях.
+- [`adr/0006-cooperative-claude-workflow.md`](adr/0006-cooperative-claude-workflow.md) —
+  планирующий Claude в чате + исполняющий Claude Code,
+  обмен через публичный git и Telegram-уведомления.
 
 ## Когда писать новый ADR
 

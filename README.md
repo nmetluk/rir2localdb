@@ -53,6 +53,13 @@ rir2localdb api  # http://localhost:8000/docs
 Если работу прервали — открой [`CONTEXT.md`](CONTEXT.md). Там в одном
 месте: где мы сейчас, что сделано, что следующее, известные блокеры.
 
+## Development workflow
+
+Проект ведётся двумя Claude'ами через публичный git — планирующий
+в чате, исполняющий в Claude Code. Правила, артефакты и жизненный
+цикл шага — в [`.claude/WORKFLOW.md`](.claude/WORKFLOW.md). См. также
+ADR-0006 в [`docs/09-decisions.md`](docs/09-decisions.md).
+
 ## Лицензия
 
 MIT — см. [`LICENSE`](LICENSE).
