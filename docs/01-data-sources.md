@@ -17,9 +17,11 @@
   Объём существенный (RIPE inet6num ~36 МБ gzip'ом, aut-num ~8 МБ,
   и т.д.). Парсятся как поток RPSL-объектов.
 - **`arin-rr`** — публичный IRR-дамп ARIN (`pub/rr/arin.db.gz`).
-  Это **не** whois-данные ARIN, а маршрутные объекты (route, aut-num
-  с routing policy). Полезно для ASN-ответа, но не заменяет
-  ARIN Bulk Whois.
+  Это **не** whois ARIN, а только маршрутные / mntner-объекты RPSL:
+  `route`, `route6`, `as-set`, `mntner`. Объектов `inetnum`,
+  `organisation`, `role`, `person`, `aut-num` с описаниями **в этом
+  файле нет**. Полезно для дополнения ASN-ответов маршрутными
+  политиками; для ownership-данных нужны другие источники (см. ниже).
 - **`arin-bulk`** — официальный ARIN Bulk Whois. Требует API-ключ и
   согласие с ToU. Подключается опционально (через
   `RIR2LOCALDB_ARIN_BULK_KEY` env var). Stage 2+.
@@ -58,15 +60,59 @@
 ### ARIN
 
 - Корень: `https://ftp.arin.net/pub/`
-- Delegated extended: `pub/stats/arin/delegated-arin-extended-latest`
-  + `.md5`
-- Публичный IRR (не whois): `pub/rr/arin.db.gz` (RPSL формат, но
-  только маршрутные объекты).
-- Bulk Whois — закрытый: `https://accountws.arin.net/public/rest/downloads/bulkwhois?apikey=...`
-  Требует API-ключ и согласие с ToU.
-  - При наличии ключа выгружается ZIP-архив с XML и TXT.
-  - Подключение опционально, по env `RIR2LOCALDB_ARIN_BULK_KEY`.
 - Зона: Северная Америка + часть Карибов.
+
+ARIN — единственный из пяти RIR, у которого **нет публичного полного
+whois-дампа**. Поэтому источники у него делятся жёстче, чем у
+остальных, и важно не путать слои.
+
+**Открыто без ключа, используем:**
+
+- **Delegated extended:** `pub/stats/arin/delegated-arin-extended-latest`
+  + `.md5`. Полный, ежедневный, без ограничений по содержимому.
+  Tier `core`. Из чего состоит: см. раздел «Формат delegated-extended»
+  ниже. Это то, что позволяет ответить «к какому реестру и стране
+  относится IP/ASN», но без названия организации и контактов.
+
+- **Публичный IRR:** `pub/rr/arin.db.gz`. RPSL-формат, **но только
+  маршрутные и mntner-объекты**: `route`, `route6`, `as-set`, `mntner`.
+  В этом файле **нет** `inetnum`, `organisation`, `role`, `person`,
+  `aut-num` с описаниями. Tier `arin-rr` (Stage 2). Полезно для
+  маршрутных политик к ASN, не заменяет whois.
+
+**Открыто, но не используем (для справки):**
+
+- `pub/rpki/` — RPKI-репозиторий. Отдельный домен валидации, для
+  нашей задачи вне scope.
+- `pub/rwhois/` — список делегированных rwhois-серверов клиентов
+  ARIN. Не централизованные данные, бесполезно для зеркала.
+
+**Закрыто, только по API-ключу:**
+
+- **Bulk Whois:**
+  `https://accountws.arin.net/public/rest/downloads/bulkwhois?apikey=...`
+  Требует заявки в ARIN, согласия с ToU и API-ключа. Отдаёт полный
+  whois (inetnum, organisation, POC, role, customer) ZIP-архивом с
+  XML и TXT. Tier `arin-bulk` (Stage 2, опционально).
+  Включается через env `RIR2LOCALDB_ARIN_BULK_KEY` — без ключа этот
+  tier недоступен.
+
+**Стратегия по rich-данным ARIN в Stage 2** (финализируется в начале
+Stage 2):
+
+1. **База:** ежедневный mirror `pub/rr/arin.db.gz` (`arin-rr`)
+   — даёт маршрутные/mntner-объекты для ASN-ответов.
+2. **On-demand обогащение:** RDAP-запросы к `https://rdap.arin.net/`
+   на lookup-time для конкретных IP/ASN — добывает ownership и
+   контакты, кэшируется в локальную таблицу с TTL. Уважает
+   ARIN rate-limit (см. их публичную политику).
+3. **Опциональный fallback:** Bulk Whois API для инсталляций, готовых
+   пройти ToU и держать полный whois локально без RDAP-latency.
+
+То есть RDAP-обогащение по умолчанию вытесняет необходимость заявки
+на Bulk Whois для типичного публичного сервиса. Заявка по-прежнему
+имеет смысл, если нужно (а) full-table-scan по ownership, (б)
+работа в офлайне, (в) тысячи lookup'ов в секунду.
 
 ### LACNIC
 
