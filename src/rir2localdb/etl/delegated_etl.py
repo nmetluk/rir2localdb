@@ -149,7 +149,47 @@ async def apply_delegated_etl(
             family, FK на sync_run и т.д.) — внешняя транзакция
             откатится вызывающим кодом.
     """
-    raise NotImplementedError("apply_delegated_etl — stage 1 step 6")
+    ip_rows: list[tuple[Any, ...]] = []
+    asn_rows: list[tuple[Any, ...]] = []
+    records_seen = 0
+    skipped = 0
+
+    for rec in records:
+        records_seen += 1
+        if rec.type == "ipv4" or rec.type == "ipv6":
+            ip_rows.append(_record_to_ip_row(rec))
+        elif rec.type == "asn":
+            asn_rows.append(_record_to_asn_row(rec))
+        else:
+            # parsers/delegated.py уже фильтрует unknown-type, но
+            # не доверяем слепо: ETL может вызываться с другим
+            # источником записей.
+            skipped += 1
+
+    await _create_staging_tables(conn)
+
+    ip_inserted = ip_updated = 0
+    if ip_rows:
+        await conn.copy_records_to_table("staging_ip", records=ip_rows, columns=list(_IP_COLUMNS))
+        ip_inserted, ip_updated = await _upsert_ip_from_staging(conn, run_id)
+
+    asn_inserted = asn_updated = 0
+    if asn_rows:
+        await conn.copy_records_to_table(
+            "staging_asn", records=asn_rows, columns=list(_ASN_COLUMNS)
+        )
+        asn_inserted, asn_updated = await _upsert_asn_from_staging(conn, run_id)
+
+    return EtlStats(
+        records_seen=records_seen,
+        ip_records=len(ip_rows),
+        asn_records=len(asn_rows),
+        skipped_unsupported_type=skipped,
+        ip_inserted=ip_inserted,
+        ip_updated=ip_updated,
+        asn_inserted=asn_inserted,
+        asn_updated=asn_updated,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +220,38 @@ def _record_to_ip_row(rec: DelegatedRecord) -> tuple[Any, ...]:
     Прочие поля: ``rir``, ``cc``, ``value``, ``status``, ``allocated_on``,
     ``opaque_id``, ``extensions`` — копируются из ``rec``.
     """
-    raise NotImplementedError
+    if rec.type == "ipv4":
+        start_int = _ipv4_to_int(rec.start)
+        return (
+            rec.registry,
+            rec.cc,
+            4,
+            asyncpg.Range(start_int, start_int + rec.value),
+            None,
+            None,
+            rec.start,
+            rec.value,
+            rec.status,
+            rec.date,
+            rec.opaque_id,
+            rec.extensions,
+        )
+    # ipv6
+    start_int, canonical = _ipv6_to_int_and_canonical(rec.start)
+    return (
+        rec.registry,
+        rec.cc,
+        6,
+        None,
+        asyncpg.Range(start_int, start_int + (1 << (128 - rec.value))),
+        rec.value,
+        canonical,
+        rec.value,
+        rec.status,
+        rec.date,
+        rec.opaque_id,
+        rec.extensions,
+    )
 
 
 def _record_to_asn_row(rec: DelegatedRecord) -> tuple[Any, ...]:
@@ -193,7 +264,19 @@ def _record_to_asn_row(rec: DelegatedRecord) -> tuple[Any, ...]:
     - ``start_asn``, ``count`` хранятся как отдельные колонки —
       удобно для индекса по ``start_asn`` и для отображения.
     """
-    raise NotImplementedError
+    start_asn = int(rec.start)
+    count = rec.value
+    return (
+        rec.registry,
+        rec.cc,
+        asyncpg.Range(start_asn, start_asn + count),
+        start_asn,
+        count,
+        rec.status,
+        rec.date,
+        rec.opaque_id,
+        rec.extensions,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +296,38 @@ async def _create_staging_tables(conn: asyncpg.Connection) -> None:
     транзакции. ``DROP IF EXISTS`` перед ``CREATE`` — идемпотентность
     на случай повторного вызова в той же транзакции.
     """
-    raise NotImplementedError
+    await conn.execute(
+        """
+        DROP TABLE IF EXISTS staging_ip;
+        CREATE TEMP TABLE staging_ip (
+            rir           TEXT,
+            cc            TEXT,
+            family        SMALLINT,
+            range_v4      INT8RANGE,
+            range_v6      NUMRANGE,
+            prefix_length SMALLINT,
+            start_text    INET,
+            value         BIGINT,
+            status        TEXT,
+            allocated_on  DATE,
+            opaque_id     TEXT,
+            extensions    TEXT
+        ) ON COMMIT DROP;
+
+        DROP TABLE IF EXISTS staging_asn;
+        CREATE TEMP TABLE staging_asn (
+            rir          TEXT,
+            cc           TEXT,
+            asn_range    INT8RANGE,
+            start_asn    BIGINT,
+            count        INTEGER,
+            status       TEXT,
+            allocated_on DATE,
+            opaque_id    TEXT,
+            extensions   TEXT
+        ) ON COMMIT DROP;
+        """
+    )
 
 
 async def _upsert_ip_from_staging(conn: asyncpg.Connection, run_id: int) -> tuple[int, int]:
@@ -233,12 +347,64 @@ async def _upsert_ip_from_staging(conn: asyncpg.Connection, run_id: int) -> tupl
     Returns:
         ``(inserted_count, updated_count)``.
     """
-    raise NotImplementedError
+    rows = await conn.fetch(_UPSERT_IP_SQL, run_id)
+    inserted = sum(1 for r in rows if r["inserted"])
+    return inserted, len(rows) - inserted
 
 
 async def _upsert_asn_from_staging(conn: asyncpg.Connection, run_id: int) -> tuple[int, int]:
     """То же для ``asn_allocation``. Натуральный ключ ``(rir, start_asn, count)``."""
-    raise NotImplementedError
+    rows = await conn.fetch(_UPSERT_ASN_SQL, run_id)
+    inserted = sum(1 for r in rows if r["inserted"])
+    return inserted, len(rows) - inserted
+
+
+_UPSERT_IP_SQL: Final[str] = """
+INSERT INTO ip_allocation (
+    rir, cc, family, range_v4, range_v6, prefix_length,
+    start_text, value, status, allocated_on, opaque_id, extensions,
+    first_seen_run, last_seen_run
+)
+SELECT
+    rir, cc, family, range_v4, range_v6, prefix_length,
+    start_text, value, status, allocated_on, opaque_id, extensions,
+    $1, $1
+FROM staging_ip
+ON CONFLICT (rir, family, start_text, value) DO UPDATE SET
+    cc            = EXCLUDED.cc,
+    range_v4      = EXCLUDED.range_v4,
+    range_v6      = EXCLUDED.range_v6,
+    prefix_length = EXCLUDED.prefix_length,
+    status        = EXCLUDED.status,
+    allocated_on  = EXCLUDED.allocated_on,
+    opaque_id     = EXCLUDED.opaque_id,
+    extensions    = EXCLUDED.extensions,
+    last_seen_run = EXCLUDED.last_seen_run
+RETURNING (xmax = 0) AS inserted
+"""
+
+
+_UPSERT_ASN_SQL: Final[str] = """
+INSERT INTO asn_allocation (
+    rir, cc, asn_range, start_asn, count,
+    status, allocated_on, opaque_id, extensions,
+    first_seen_run, last_seen_run
+)
+SELECT
+    rir, cc, asn_range, start_asn, count,
+    status, allocated_on, opaque_id, extensions,
+    $1, $1
+FROM staging_asn
+ON CONFLICT (rir, start_asn, count) DO UPDATE SET
+    cc            = EXCLUDED.cc,
+    asn_range     = EXCLUDED.asn_range,
+    status        = EXCLUDED.status,
+    allocated_on  = EXCLUDED.allocated_on,
+    opaque_id     = EXCLUDED.opaque_id,
+    extensions    = EXCLUDED.extensions,
+    last_seen_run = EXCLUDED.last_seen_run
+RETURNING (xmax = 0) AS inserted
+"""
 
 
 # ---------------------------------------------------------------------------
