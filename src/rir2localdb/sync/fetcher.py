@@ -120,6 +120,11 @@ class FetchResult:
     и все три tier'а)."""
     error: str | None = None
     """Человекочитаемая причина для ``FetchStatus.ERROR``."""
+    tier_used: int | None = None
+    """Какой tier закрыл запрос: ``1`` (md5 match), ``2`` (304),
+    ``3`` (тело скачано). ``None`` для ``ERROR`` — не дошли до
+    определения tier'а или упали посередине. Для ``NEW``/``UPDATED``
+    всегда ``3``. ``state.py`` опирается на это поле для UPSERT-правил."""
 
 
 class FetchError(Exception):
@@ -261,6 +266,7 @@ async def fetch(
                     url=source.url,
                     md5_sidecar=md5_sidecar_value,
                     fetch_ms=_ms(started),
+                    tier_used=1,
                 )
 
         # Tier 2 + 3 — conditional GET с потенциальным стримом тела.
@@ -290,6 +296,7 @@ async def fetch(
                 or (previous.last_modified if previous else None),
                 md5_sidecar=md5_sidecar_value,
                 fetch_ms=_ms(started),
+                tier_used=2,
             )
 
         # 200 — тело скачано. Tier 3: сравниваем sha256.
@@ -310,6 +317,7 @@ async def fetch(
             last_modified=outcome.last_modified,
             md5_sidecar=md5_sidecar_value,
             fetch_ms=_ms(started),
+            tier_used=3,
         )
 
     except FetchError as exc:
@@ -319,6 +327,7 @@ async def fetch(
             md5_sidecar=md5_sidecar_value,
             fetch_ms=_ms(started),
             error=str(exc),
+            tier_used=None,
         )
 
 

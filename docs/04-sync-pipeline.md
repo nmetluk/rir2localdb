@@ -34,6 +34,14 @@ RIR режет HTTPS быстрее, чем FTP. Спойлер: не режет
    `sync_file.last_sha256` — `not_modified` (только обновляем
    `last_fetched_at`).
 
+`FetchResult.tier_used` (1/2/3 для успеха, `None` для `ERROR`) явно
+фиксирует, какой именно tier закрыл запрос. Без этого поля
+`sync/state.py` при UPSERT'е в `sync_file` не смог бы надёжно
+различить UNCHANGED-via-tier-1 (обновляем md5) и UNCHANGED-via-tier-2
+(сохраняем старый md5 для «recheck next run») в pathological-кейсе,
+когда server вернул 304 без cache validators, а у нас не было
+сохранённого ETag.
+
 ## Загрузка
 
 - `httpx.AsyncClient` с `timeout=httpx.Timeout(60.0, connect=10.0)`

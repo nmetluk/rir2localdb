@@ -123,6 +123,7 @@ async def test_first_fetch_yields_new(tmp_path: Path) -> None:
 
     expected_path = cache_path_for(settings, source)
     assert result.status == FetchStatus.NEW
+    assert result.tier_used == 3
     assert result.url == SAMPLE_URL
     assert result.local_path == expected_path
     assert expected_path.exists()
@@ -155,6 +156,7 @@ async def test_md5_match_yields_unchanged_via_tier1(tmp_path: Path) -> None:
         )
 
     assert result.status == FetchStatus.UNCHANGED
+    assert result.tier_used == 1
     assert result.md5_sidecar == EXPECTED_MD5
     assert result.local_path is None
     assert result.content_sha256 is None
@@ -194,6 +196,7 @@ async def test_conditional_get_304_yields_unchanged_via_tier2(tmp_path: Path) ->
         )
 
     assert result.status == FetchStatus.UNCHANGED
+    assert result.tier_used == 2
     assert result.local_path is None
     assert result.content_sha256 is None
     assert result.md5_sidecar == new_md5
@@ -226,6 +229,7 @@ async def test_same_sha256_after_download_yields_unchanged_via_tier3(tmp_path: P
         result = await fetch(client, source, previous, settings, sleep=_no_sleep)
 
     assert result.status == FetchStatus.UNCHANGED
+    assert result.tier_used == 3
     assert result.local_path == cache_path_for(settings, source)
     assert result.local_path.exists()
     assert result.content_sha256 == EXPECTED_SHA
@@ -251,6 +255,7 @@ async def test_changed_content_yields_updated(tmp_path: Path) -> None:
         result = await fetch(client, source, previous, settings, sleep=_no_sleep)
 
     assert result.status == FetchStatus.UPDATED
+    assert result.tier_used == 3
     assert result.local_path == cache_path_for(settings, source)
     assert result.local_path.read_bytes() == BODY
     assert result.content_sha256 == EXPECTED_SHA
@@ -280,6 +285,7 @@ async def test_5xx_then_success_retries_and_returns_updated(tmp_path: Path) -> N
         )
 
     assert result.status == FetchStatus.UPDATED
+    assert result.tier_used == 3
     assert result.error is None
     assert log.hits(SAMPLE_URL) == 3
 
@@ -300,6 +306,7 @@ async def test_persistent_5xx_returns_error_after_max_retries(tmp_path: Path) ->
         )
 
     assert result.status == FetchStatus.ERROR
+    assert result.tier_used is None
     assert result.error is not None
     assert "500" in result.error
     assert log.hits(SAMPLE_URL) == 3
@@ -319,6 +326,7 @@ async def test_4xx_main_file_returns_error_no_retry(tmp_path: Path) -> None:
         result = await fetch(client, _sample_source(), None, _settings(tmp_path), sleep=_no_sleep)
 
     assert result.status == FetchStatus.ERROR
+    assert result.tier_used is None
     assert result.error is not None
     assert "403" in result.error
     assert log.hits(SAMPLE_URL) == 1
@@ -340,6 +348,7 @@ async def test_404_md5_sidecar_falls_through_to_tier2(tmp_path: Path) -> None:
         result = await fetch(client, _sample_source(), None, _settings(tmp_path), sleep=_no_sleep)
 
     assert result.status == FetchStatus.NEW
+    assert result.tier_used == 3
     assert result.md5_sidecar is None
     assert result.error is None
     assert log.hits(SAMPLE_MD5_URL) == 1
