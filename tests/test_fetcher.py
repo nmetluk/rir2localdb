@@ -52,7 +52,7 @@ def _settings(tmp_path: Path, *, retries: int = 3) -> Settings:
     # _env_file=None — отключаем чтение .env (там реальный database_url),
     # чтобы тесты не зависели от окружения вызова.
     return Settings(
-        _env_file=None,
+        _env_file=None,  # type: ignore[call-arg]
         database_url="postgresql+asyncpg://test:test@localhost/test",
         data_dir=tmp_path,
         http_timeout=5.0,

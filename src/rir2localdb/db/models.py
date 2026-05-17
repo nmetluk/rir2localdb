@@ -33,9 +33,7 @@ class SyncRun(Base):
     started_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("now()")
     )
-    finished_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
+    finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(Text)
     """``running`` / ``success`` / ``failed`` (см. ``docs/03``)."""
     stats: Mapped[dict[str, Any]] = mapped_column(
@@ -62,15 +60,11 @@ class SyncFile(Base):
     """``new`` / ``updated`` / ``unchanged`` / ``error`` — соответствует
     ``FetchStatus.value`` в ``sync/fetcher.py``."""
     last_etag: Mapped[str | None] = mapped_column(Text, nullable=True)
-    last_modified: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
+    last_modified: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     last_md5: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     last_fetched_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
-    last_parsed_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
+    last_parsed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)

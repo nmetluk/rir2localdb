@@ -61,9 +61,7 @@ from rir2localdb.sync.fetcher import FetchResult, FetchStatus, PreviousFetchStat
 logger = logging.getLogger(__name__)
 
 
-async def read_previous_state(
-    session: AsyncSession, url: str
-) -> PreviousFetchState | None:
+async def read_previous_state(session: AsyncSession, url: str) -> PreviousFetchState | None:
     """Прочитать строку ``sync_file`` по ``url`` и собрать ``PreviousFetchState``.
 
     Returns:
@@ -72,9 +70,7 @@ async def read_previous_state(
         ``last_modified`` конвертируется обратно в HTTP-date строку,
         потому что fetcher работает с этим форматом для conditional GET.
     """
-    row = (
-        await session.execute(select(SyncFile).where(SyncFile.url == url))
-    ).scalar_one_or_none()
+    row = (await session.execute(select(SyncFile).where(SyncFile.url == url))).scalar_one_or_none()
     if row is None:
         return None
     return PreviousFetchState(
@@ -109,9 +105,7 @@ async def write_result(
     await session.execute(stmt)
 
 
-async def mark_parsed(
-    session: AsyncSession, url: str, parsed_at: datetime
-) -> None:
+async def mark_parsed(session: AsyncSession, url: str, parsed_at: datetime) -> None:
     """Обновить ``last_parsed_at`` для строки ``sync_file``.
 
     Никаких других колонок не трогает. Если строки нет — UPDATE
@@ -154,9 +148,7 @@ def _row_values(
     }
 
 
-def _payload_for_status(
-    result: FetchResult, existing: SyncFile | None
-) -> dict[str, Any]:
+def _payload_for_status(result: FetchResult, existing: SyncFile | None) -> dict[str, Any]:
     """Decide, что писать в payload-колонки на основе ``status``/``tier_used``."""
 
     def old(field: str) -> Any:

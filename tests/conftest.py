@@ -49,7 +49,8 @@ def test_settings() -> Settings:
     ``.env``, ``test_settings.test_database_url`` будет ``None``.
     Дальнейшие БД-фикстуры в этом случае ``pytest.skip()``.
     """
-    return Settings()
+    # mypy не знает, что database_url подъезжает из env / .env — добавляем ignore.
+    return Settings()  # type: ignore[call-arg]
 
 
 @pytest.fixture(scope="session")
@@ -106,10 +107,7 @@ async def sync_run_id(db_session: AsyncSession) -> int:
     поэтому для тестов state.py всегда нужен валидный run_id.
     """
     result = await db_session.execute(
-        text(
-            "INSERT INTO sync_run (tier, status) "
-            "VALUES ('core', 'running') RETURNING id"
-        )
+        text("INSERT INTO sync_run (tier, status) VALUES ('core', 'running') RETURNING id")
     )
     rid = result.scalar_one()
     await db_session.flush()
