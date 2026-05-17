@@ -1,24 +1,22 @@
 """Application configuration (pydantic-settings).
 
 Читает переменные окружения с префиксом ``RIR2LOCALDB_`` (см. ``.env.example``).
-В Stage 1 шаг 1 заведено минимум полей — только то, что нужно Alembic'у.
-Остальные поля добавляются по мере появления потребителей.
+Поля добавляются по мере появления потребителей — пока здесь только то,
+что нужно ``Alembic`` (``database_url``) и ``sync/fetcher`` (``data_dir`` +
+``http_*``). Остальные ``RIR2LOCALDB_*`` переменные из ``.env`` игнорируются
+без ошибки (``extra='ignore'``).
 """
 
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Конфиг приложения.
-
-    Все поля грузятся из env с префиксом ``RIR2LOCALDB_`` или из ``.env``
-    в корне проекта. ``extra='ignore'`` — чтобы переменные из ``.env``,
-    для которых здесь ещё нет полей, не вызывали ошибку.
-    """
+    """Конфиг приложения."""
 
     model_config = SettingsConfigDict(
         env_prefix="RIR2LOCALDB_",
@@ -29,6 +27,23 @@ class Settings(BaseSettings):
     )
 
     database_url: str
+    """Полный SQLAlchemy URL вида ``postgresql+asyncpg://user:pass@host:port/db``."""
+
+    data_dir: Path = Path("./data")
+    """Корень для локального кэша скачанных файлов и временных артефактов.
+    Fetcher кладёт файлы в ``<data_dir>/cache/<rir>/<filename>``.
+    """
+
+    http_timeout: float = 60.0
+    """Полный таймаут одного HTTP-запроса в секундах."""
+
+    http_max_connections: int = 10
+    """Максимум одновременных соединений в общем ``httpx.AsyncClient``."""
+
+    http_retries: int = 3
+    """Сколько раз ретраить один HTTP-запрос на 5xx/429/network errors.
+    См. ``_retry_request`` в ``sync/fetcher.py`` про backoff.
+    """
 
 
 @lru_cache(maxsize=1)
