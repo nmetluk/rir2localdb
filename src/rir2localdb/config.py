@@ -12,6 +12,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import PostgresDsn
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -28,6 +29,13 @@ class Settings(BaseSettings):
 
     database_url: str
     """Полный SQLAlchemy URL вида ``postgresql+asyncpg://user:pass@host:port/db``."""
+
+    test_database_url: PostgresDsn | None = None
+    """URL отдельной БД для интеграционных тестов state.py / etl.
+    Если ``None`` — соответствующие тесты пропускаются. Локально по
+    умолчанию ``postgresql+asyncpg://rir2localdb:rir2localdb@127.0.0.1:5432/rir2localdb_test``
+    (см. ``.env.example``).
+    """
 
     data_dir: Path = Path("./data")
     """Корень для локального кэша скачанных файлов и временных артефактов.

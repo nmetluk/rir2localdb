@@ -22,8 +22,11 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# URL берём из Settings, не из alembic.ini.
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# URL: программный вызов (тесты, скрипты) может задать sqlalchemy.url
+# через ``cfg.set_main_option("sqlalchemy.url", ...)`` ДО запуска
+# alembic — в таком случае его и используем. Иначе берём из Settings.
+if not config.get_main_option("sqlalchemy.url"):
+    config.set_main_option("sqlalchemy.url", get_settings().database_url)
 
 target_metadata = Base.metadata
 
