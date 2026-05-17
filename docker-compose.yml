@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: rir2localdb-postgres
+    environment:
+      POSTGRES_DB: rir2localdb
+      POSTGRES_USER: rir2localdb
+      POSTGRES_PASSWORD: rir2localdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - rir2localdb-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rir2localdb -d rir2localdb"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  rir2localdb-pg-data:
