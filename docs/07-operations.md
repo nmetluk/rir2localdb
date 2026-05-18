@@ -113,7 +113,121 @@ systemd timer выше — рекомендуемый вариант для bare
 0 3 * * * rir2local /home/rir2local/rir2localdb/.venv/bin/rir2localdb sync --tier core --tier rich >> /var/log/rir2localdb/sync.log 2>&1
 ```
 
-**Docker / Kubernetes CronJob** — образ + манифесты будут в Stage 3-04.
+**Docker / Kubernetes CronJob** — см. § «Deployment via Docker» ниже.
+
+## Deployment via Docker
+
+Альтернатива systemd: тот же `rir2localdb` запускается в контейнере.
+Один image (`rir2localdb:latest` собранный из `Dockerfile`), три
+команды через `ENTRYPOINT=rir2localdb`:
+
+- `serve` (default CMD) — long-running uvicorn, restart unless-stopped.
+- `migrate` — oneshot, `alembic upgrade head`.
+- `sync --tier core --tier rich` — oneshot, run по cron / K8s CronJob.
+
+`docker-compose.yml` определяет три service'а: `postgres`,
+`api` (default `up`), `migrate` и `sync` (через `profiles:` —
+не стартуют автоматически, явный вызов).
+
+### Quick start
+
+```bash
+# 1. PG + apply migrations + поднять API.
+docker compose up -d postgres
+docker compose run --rm migrate          # один раз, после первого install и каждого alembic-revision push'а
+docker compose up -d api
+
+# 2. Smoke — healthz должен ответить 200.
+curl -fsS http://localhost:8000/v1/healthz
+
+# 3. One-off sync вручную.
+docker compose run --rm sync             # core+rich (default из compose)
+docker compose run --rm sync sync --tier core   # только core (override CMD)
+
+# 4. CLI команды через тот же image.
+docker compose run --rm sync status --json
+docker compose run --rm sync gc --dry-run
+```
+
+### Production cron
+
+systemd timer вне контейнера, дёргает `docker compose run`:
+
+```ini
+# /etc/systemd/system/rir2localdb-docker-sync.service
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/rir2localdb
+ExecStart=/usr/bin/docker compose run --rm sync
+```
+
+Или host cron:
+
+```cron
+0 3 * * *  cd /opt/rir2localdb && docker compose run --rm sync >> /var/log/rir2localdb-sync.log 2>&1
+```
+
+Или Kubernetes:
+
+```yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: rir2localdb-sync
+spec:
+  schedule: "0 3 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: sync
+              image: rir2localdb:latest
+              args: ["sync", "--tier", "core", "--tier", "rich"]
+              env:
+                - name: RIR2LOCALDB_DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: rir2localdb
+                      key: database_url
+                - name: RIR2LOCALDB_LOG_FORMAT
+                  value: json
+```
+
+### Образ
+
+- Base: `python:3.12-slim` (Debian 12 slim, ~50MB).
+- Multi-stage: `builder` ставит wheel, runtime копирует `/opt/venv`.
+- Runtime deps: `libpq5` + `ca-certificates`. Build deps
+  (`build-essential libpq-dev`) только в builder-stage.
+- Non-root user `rir2local` (UID 1001).
+- Default `RIR2LOCALDB_LOG_FORMAT=json` — production режим. Override
+  `RIR2LOCALDB_LOG_FORMAT=console` для отладки.
+- Healthcheck — `python -c "httpx.get('/v1/healthz')"`.
+  Liveness, не readiness; не пингует БД.
+- Финальный размер: ~330 MB.
+
+### Volumes
+
+| Volume | Path | Назначение | Persistent? |
+|---|---|---|---|
+| `rir2localdb-pg-data` | `/var/lib/postgresql/data` | данные PG | **да** |
+| `rir2localdb-data` | `/var/lib/rir2localdb/data` | cache скачанных файлов | опц. (регенерится sync'ом) |
+
+### Dev override
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+```
+
+`docker-compose.dev.yml` переопределяет:
+- Postgres exposed на host 5432 (для DB-GUI/psql с хоста).
+- API в `console` log mode + DEBUG.
+- src/ mount'ится в `/opt/venv/lib/python3.12/site-packages/rir2localdb`
+  для hot-reload (хоть надо ещё `--reload` в uvicorn — но команда
+  `serve` не передаёт; для итеративной разработки удобнее запускать
+  uvicorn вручную или через `rir2localdb serve` локально).
 
 ## Переменные окружения
 

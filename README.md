@@ -78,6 +78,20 @@ Sync будет запускаться ежедневно в 03:00 UTC. Логи
 `journalctl -u rir2localdb-sync`. Подробности и hardening —
 [`docs/07-operations.md`](docs/07-operations.md) § «Daily sync via systemd».
 
+### Production deployment (Docker)
+
+```bash
+docker compose up -d postgres
+docker compose run --rm migrate
+docker compose up -d api
+
+# Sync по cron (host или k8s CronJob):
+echo "0 3 * * * cd $(pwd) && docker compose run --rm sync" | crontab -
+```
+
+Подробнее (Kubernetes CronJob, volumes, dev override) — см.
+[`docs/07-operations.md`](docs/07-operations.md) § «Deployment via Docker».
+
 ### Observability
 
 - **Prometheus metrics** на `/v1/metrics`: sync_run / per-table rows /
