@@ -27,66 +27,57 @@
   (2026-05-18). `02-99-stage-2-closed.md`.
 - **Stage 2.50** ✅ RPSL coverage до 11 типов + `rir` normalization
   + CONTEXT cleanup (2026-05-18). `02-50-rpsl-completeness-and-cleanup.md`.
-- **Stage 3** в работе.
-  - **3-01** ✅ systemd timer + service (daily sync 03:00 UTC,
-    hardened sandbox, live install на сервере, 2026-05-18).
-    `03-01-systemd-timer.md`.
+- **Stage 3** ✅ ЗАКРЫТ ЦЕЛИКОМ (2026-05-18). Operations cycle:
+  - **3-01** ✅ systemd timer + service. `03-01-systemd-timer.md`.
   - **3-02** ✅ Prometheus `/v1/metrics` + structured JSON logs
-    через structlog (2026-05-18). `03-02-metrics-and-structured-logs.md`.
-    Заодно поймал и пофиксил `now()` → `clock_timestamp()` для
-    sync_run.finished_at.
-  - **3-03** ✅ Stale-records GC (2026-05-18). Soft-delete через
-    `is_stale` + 7-run grace; auto после успешного sync; API hide
-    by default + `?include_stale=true`; gauge
-    `rir2localdb_stale_records`. ADR-0008, `03-03-stale-records-gc.md`.
-  - **3-04** ✅ Dockerfile + compose (2026-05-18). Multi-stage build
-    на `python:3.12-slim`, один image / три CMD (serve/migrate/sync),
-    non-root user, compose profile'ы для oneshot oneshot. Live smoke:
-    full stack up + healthz/readyz зелёные. `03-04-docker.md`.
-  - **3-05** ✅ RDAP fallback для ARIN ownership (2026-05-18). On-demand
-    GET на `rdap.arin.net` + DB cache (24h TTL), transparent для
-    клиента. opt-in env. ADR-0009. Known limitation: APNIC catch-all
-    `IANA-NETBLOCK-*` блоки маскируют bulk-miss → RDAP не активируется
-    для большинства ARIN-IP; refine'м в follow-up при реальном спросе.
-    `03-05-rdap-fallback.md`.
+    + `clock_timestamp()` fix для finished_at.
+    `03-02-metrics-and-structured-logs.md`.
+  - **3-03** ✅ Stale-records GC, `is_stale` + 7-run grace. ADR-0008.
+    `03-03-stale-records-gc.md`.
+  - **3-04** ✅ Dockerfile + compose. Multi-stage, один image / три CMD.
+    `03-04-docker.md`.
+  - **3-05** ✅ RDAP fallback для ARIN. ADR-0009. Known limitation:
+    APNIC catch-all IANA-NETBLOCK маскирует bulk-miss → refine'м в
+    follow-up. `03-05-rdap-fallback.md`.
+  - **3-06** ✅ Grafana + Prometheus alerts. 4 группы alerts,
+    5-section dashboard, Alertmanager→Telegram example.
+    `03-06-grafana-and-alerts.md`.
+
+  Итоги Stage 3 — `.claude/session-log/03-99-stage-3-closed.md`.
   - 3-05 ⏳ RDAP fallback (опц.).
   - 3-06 ⏳ Grafana + alerts.
   - 3-07 ⏳ API mntner/person/as_set (опц.).
 
 ## Текущие цифры
 
-- ~36 модулей в `src/rir2localdb/`.
-- ~132 unit-тестов + 1 integration smoke (`pytest -m integration`).
-- 7 ADR.
-- 11 RPSL таблиц + 2 delegated (`ip_allocation` / `asn_allocation`).
-- Last live full sync: 646k IP + 113k ASN + 9.65M RPSL objects за
-  ~24 минуты.
+- ~39 модулей в `src/rir2localdb/`.
+- 151 unit-тест + 1 integration smoke (`pytest -m integration`).
+- 9 ADR.
+- 6 миграций (0001-0006).
+- 13 RPSL таблиц + 2 delegated + rdap_cache.
+- ~120 коммитов после bootstrap.
+- Live state: 1 full sync (24 мин) + 2 incremental (8.5 мин + 4.6 sec),
+  9.65M RPSL objects + 759k delegated.
 
-## Что дальше — Stage 3 ops (high-level)
+## Что дальше
 
-- **3-01** systemd timer + сервис (daily sync).
-- **3-02** Prometheus `/metrics` endpoint + structured JSON logs.
-- **3-03** Stale-records GC (ADR-0001).
-- **3-04** Dockerfile + compose для prod (api + sync worker).
-- **3-05** (опц.) RDAP fallback для ARIN ownership (бывший 2-06).
-- **3-06** (опц.) Grafana dashboard + Prometheus alert rules.
-- **3-07** (опц.) API расширение под `mntner` / `person` / `as_set`
-  (данные уже в БД после 2.50, REST endpoint'ы — Stage 3 если решим).
+Pause. Все обещанные функции есть, infra для prod готова,
+observability есть. Утилита по-настоящему готова к long-running
+deployment.
 
-Детали — `docs/08-roadmap.md` § Stage 3 (расширим перед стартом).
+Опциональные follow-ups (по запросу):
 
-## Открытые вопросы
-
-1. **LACNIC RDAP-fallback.** LACNIC не публикует полного дампа.
-   Опционально подключить RDAP с rate-limit. Stage 3+.
-2. **`data_dir` validation.** `run_sync` создаёт каталог через
-   `mkdir(parents=True, exist_ok=True)` — опечатка в `.env` даст
-   каталог в неожиданном месте. Stage 3 ops может добавить sanity-check.
-3. **ARIN Bulk Whois ключ.** Опциональный fallback для полного whois
-   ARIN. Решение откладывается до конкретной потребности.
-4. **API расширение под mntner/person/as_set.** Stage 2.50 § A
-   загрузила данные в БД, но REST endpoint'ы не добавлены. Если
-   реальный спрос появится — Stage 3-07.
+1. **IANA-NETBLOCK suppression** для RDAP fallback (Stage 3-05
+   known limitation).
+2. **LACNIC RDAP-fallback** — отдельный module по образцу ARIN.
+3. **ARIN Bulk Whois API** — env-gated, для тех, кто готов пройти ToU.
+4. **API расширение под mntner/person/as_set** — данные в БД,
+   REST endpoint'ов нет.
+5. **GH Container Registry push** — Docker image сейчас build'ится
+   ephemerally в CI; реальный push требует credentials.
+6. **Kubernetes Helm chart** / **distroless image** / **BGP-таблицы
+   RIPE RIS** / **partitioning при >50M строк** — Stage 4+ если будет
+   запрос.
 
 ## Где что лежит
 
