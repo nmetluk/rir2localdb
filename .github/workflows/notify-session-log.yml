@@ -58,8 +58,29 @@ jobs:
             printf '</pre>\n'
           } > "$msg"
 
-          curl -fsS "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+          # Сохраним response для диагностики
+          response_file=/tmp/tg-response.txt
+          http_code=$(curl -sS -o "$response_file" -w '%{http_code}' \
+            "https://api.telegram.org/bot${TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${CHAT_ID}" \
             --data-urlencode "parse_mode=HTML" \
             --data-urlencode "disable_web_page_preview=true" \
-            --data-urlencode "text@${msg}"
+            --data-urlencode "text@${msg}")
+
+          echo "Telegram API HTTP code: $http_code"
+          echo "Telegram API response body:"
+          cat "$response_file"
+          echo
+
+          if [ "$http_code" != "200" ]; then
+            echo "::error::Telegram API returned non-200 ($http_code)"
+            exit 1
+          fi
+
+          # Проверка `ok: true` в JSON-ответе
+          if ! grep -q '"ok":true' "$response_file"; then
+            echo "::error::Telegram API returned ok=false"
+            exit 1
+          fi
+
+          echo "Notification sent successfully."
