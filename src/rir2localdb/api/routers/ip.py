@@ -29,6 +29,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from rir2localdb.api.rdap import lookup_ip_rdap
 from rir2localdb.api.schemas import (
     IpLookupResponse,
     IpRpslBlock,
@@ -155,6 +156,8 @@ async def lookup_ip(
         raise HTTPException(status_code=400, detail=f"invalid IP address: {exc}") from exc
 
     sessionmaker = request.app.state.sessionmaker
+    settings = request.app.state.settings
+    http_client = request.app.state.http_client
     async with sessionmaker() as session:
         if isinstance(ip, IPv4Address):
             result = await session.execute(
@@ -176,7 +179,32 @@ async def lookup_ip(
         if include_rpsl:
             rpsl_block = await _fetch_ip_rpsl(session, ip, include_stale=include_stale)
 
+            # RDAP fallback (Stage 3-05): только для ARIN-блоков,
+            # только если bulk RPSL inetnum отсутствует, только если
+            # ``RIR2LOCALDB_RDAP_FALLBACK_ENABLED=true``. Прозрачно
+            # для клиента — заполняет тот же ``rpsl.inetnum`` shape.
+            if (
+                settings.rdap_fallback_enabled
+                and row["rir"] == "arin"
+                and (rpsl_block is None or rpsl_block.inetnum is None)
+            ):
+                rdap = await lookup_ip_rdap(session, http_client, str(ip), settings)
+                if rdap.found and rdap.normalized is not None:
+                    rpsl_block = _rdap_to_ip_rpsl_block(
+                        rdap.normalized, ipv6=isinstance(ip, IPv6Address)
+                    )
+
     return IpLookupResponse(address=str(ip), **dict(row), rpsl=rpsl_block)
+
+
+def _rdap_to_ip_rpsl_block(normalized: dict[str, object], *, ipv6: bool) -> IpRpslBlock:
+    """Map RDAP ``_normalize_rdap_ip`` output → IpRpslBlock pydantic-объект."""
+    inetnum_raw = normalized.get("inetnum")
+    org_raw = normalized.get("organisation")
+    inetnum_cls: type[RpslInetnum] | type[RpslInet6num] = RpslInet6num if ipv6 else RpslInetnum
+    inetnum_obj = inetnum_cls(**inetnum_raw) if isinstance(inetnum_raw, dict) else None
+    org_obj = RpslOrganisation(**org_raw) if isinstance(org_raw, dict) else None
+    return IpRpslBlock(inetnum=inetnum_obj, organisation=org_obj)
 
 
 async def _fetch_ip_rpsl(

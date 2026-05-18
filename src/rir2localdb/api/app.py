@@ -15,6 +15,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
+import httpx
 from fastapi import FastAPI, Request, Response
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -43,11 +44,19 @@ def make_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         engine = make_engine(resolved_settings.database_url)
         sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+        # Long-lived HTTP client для RDAP fallback (Stage 3-05). Создаётся
+        # на startup, dispose на shutdown — переиспользуем connection pool.
+        http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(resolved_settings.rdap_http_timeout_seconds),
+        )
         _app.state.engine = engine
         _app.state.sessionmaker = sessionmaker
+        _app.state.http_client = http_client
+        _app.state.settings = resolved_settings
         try:
             yield
         finally:
+            await http_client.aclose()
             await engine.dispose()
 
     app = FastAPI(

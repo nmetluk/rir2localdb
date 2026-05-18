@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from rir2localdb.api.rdap import lookup_asn_rdap
 from rir2localdb.api.schemas import (
     AsnLookupResponse,
     AsnRpslBlock,
@@ -89,6 +90,8 @@ async def lookup_asn(
         )
 
     sessionmaker = request.app.state.sessionmaker
+    settings = request.app.state.settings
+    http_client = request.app.state.http_client
     async with sessionmaker() as session:
         result = await session.execute(_ASN_SQL, {"asn": num, "include_stale": include_stale})
         row = result.mappings().first()
@@ -100,7 +103,26 @@ async def lookup_asn(
         if include_rpsl:
             rpsl_block = await _fetch_asn_rpsl(session, num, include_stale=include_stale)
 
+            # RDAP fallback (Stage 3-05): ARIN-only, RDAP enabled,
+            # aut_num отсутствует в bulk RPSL.
+            if (
+                settings.rdap_fallback_enabled
+                and row["rir"] == "arin"
+                and (rpsl_block is None or rpsl_block.aut_num is None)
+            ):
+                rdap = await lookup_asn_rdap(session, http_client, num, settings)
+                if rdap.found and rdap.normalized is not None:
+                    rpsl_block = _rdap_to_asn_rpsl_block(rdap.normalized)
+
     return AsnLookupResponse(asn=num, **dict(row), rpsl=rpsl_block)
+
+
+def _rdap_to_asn_rpsl_block(normalized: dict[str, object]) -> AsnRpslBlock:
+    aut_raw = normalized.get("aut_num")
+    org_raw = normalized.get("organisation")
+    aut_obj = RpslAutNum(**aut_raw) if isinstance(aut_raw, dict) else None
+    org_obj = RpslOrganisation(**org_raw) if isinstance(org_raw, dict) else None
+    return AsnRpslBlock(aut_num=aut_obj, organisation=org_obj)
 
 
 async def _fetch_asn_rpsl(session: AsyncSession, asn: int, *, include_stale: bool) -> AsnRpslBlock:
