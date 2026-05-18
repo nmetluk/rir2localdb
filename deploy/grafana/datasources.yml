@@ -1,0 +1,13 @@
+# Grafana provisioning: автоматически добавляет Prometheus datasource
+# при первом запуске. См. deploy/grafana/dashboard.json для самого
+# dashboard'а (provisioning подхватит из /etc/grafana/provisioning/dashboards/).
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false

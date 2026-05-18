@@ -1,0 +1,282 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "uid": "rir2localdb",
+  "title": "rir2localdb",
+  "tags": ["rir2localdb", "whois"],
+  "timezone": "browser",
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "version": 1,
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {"selected": false, "text": "Prometheus", "value": "Prometheus"}
+      }
+    ]
+  },
+  "time": {"from": "now-24h", "to": "now"},
+  "panels": [
+    {
+      "type": "row",
+      "id": 1,
+      "title": "Sync health",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}
+    },
+    {
+      "type": "stat",
+      "id": 2,
+      "title": "Time since last sync",
+      "description": "Seconds since the last finished sync_run (success or failed).",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 1},
+      "targets": [
+        {
+          "expr": "time() - rir2localdb_last_sync_run_finished_timestamp_seconds",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 21600},
+              {"color": "red", "value": 86400}
+            ]
+          }
+        }
+      },
+      "options": {"colorMode": "background", "graphMode": "none"}
+    },
+    {
+      "type": "stat",
+      "id": 3,
+      "title": "Last sync status",
+      "description": "1=success, 0=failed, -1=running/unknown.",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 1},
+      "targets": [
+        {"expr": "rir2localdb_last_sync_run_status", "refId": "A"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {"type": "value", "options": {"1": {"text": "Success", "color": "green"}}},
+            {"type": "value", "options": {"0": {"text": "Failed", "color": "red"}}},
+            {"type": "value", "options": {"-1": {"text": "Running", "color": "yellow"}}}
+          ]
+        }
+      },
+      "options": {"colorMode": "background", "graphMode": "none"}
+    },
+    {
+      "type": "stat",
+      "id": 4,
+      "title": "Last sync duration",
+      "description": "Wall-clock duration of last sync_run. Baseline: ~8.5min incremental, ~24min first/major.",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 1},
+      "targets": [
+        {"expr": "rir2localdb_last_sync_run_duration_seconds", "refId": "A"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 600},
+              {"color": "red", "value": 1800}
+            ]
+          }
+        }
+      },
+      "options": {"colorMode": "background", "graphMode": "none"}
+    },
+    {
+      "type": "stat",
+      "id": 5,
+      "title": "RDAP cache (active)",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 1},
+      "targets": [
+        {"expr": "rir2localdb_rdap_cache_entries{status=\"active\"}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "none"}}
+    },
+    {
+      "type": "row",
+      "id": 10,
+      "title": "Data volumes",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5}
+    },
+    {
+      "type": "timeseries",
+      "id": 11,
+      "title": "Rows per table",
+      "description": "Approximate row count (pg_class.reltuples) per table. Updated by ANALYZE.",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 16, "x": 0, "y": 6},
+      "targets": [
+        {"expr": "rir2localdb_table_rows", "legendFormat": "{{table}}", "refId": "A"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}}
+    },
+    {
+      "type": "bargauge",
+      "id": 12,
+      "title": "Current row counts",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 6},
+      "targets": [
+        {"expr": "topk(15, rir2localdb_table_rows)", "legendFormat": "{{table}}", "refId": "A", "instant": true}
+      ],
+      "options": {"orientation": "horizontal", "displayMode": "lcd"}
+    },
+    {
+      "type": "timeseries",
+      "id": 13,
+      "title": "Stale records per table",
+      "description": "Records marked is_stale=TRUE by GC (Stage 3-03).",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 14},
+      "targets": [
+        {"expr": "rir2localdb_stale_records", "legendFormat": "{{table}}", "refId": "A"}
+      ]
+    },
+    {
+      "type": "row",
+      "id": 20,
+      "title": "Source freshness",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 22}
+    },
+    {
+      "type": "table",
+      "id": 21,
+      "title": "Hours since last fetch per source",
+      "description": "Color red if >36h. Each row = one RIR source URL.",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 23},
+      "targets": [
+        {
+          "expr": "(time() - rir2localdb_source_last_fetched_timestamp_seconds) / 3600",
+          "legendFormat": "{{rir}} / {{kind}} / {{url}}",
+          "refId": "A",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "h",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 24},
+              {"color": "red", "value": 36}
+            ]
+          },
+          "custom": {"displayMode": "color-background"}
+        }
+      }
+    },
+    {
+      "type": "row",
+      "id": 30,
+      "title": "HTTP API",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 35}
+    },
+    {
+      "type": "timeseries",
+      "id": 31,
+      "title": "Request rate by endpoint",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 36},
+      "targets": [
+        {
+          "expr": "sum by (endpoint) (rate(rir2localdb_http_requests_total[5m]))",
+          "legendFormat": "{{endpoint}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps"}}
+    },
+    {
+      "type": "timeseries",
+      "id": 32,
+      "title": "Latency p95 per endpoint",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 36},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (endpoint, le) (rate(rir2localdb_http_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{endpoint}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "type": "timeseries",
+      "id": 33,
+      "title": "Status code mix",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 44},
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(rir2localdb_http_requests_total[5m]))",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps"}}
+    },
+    {
+      "type": "row",
+      "id": 40,
+      "title": "RDAP fallback (Stage 3-05)",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 52}
+    },
+    {
+      "type": "timeseries",
+      "id": 41,
+      "title": "RDAP cache miss rate",
+      "description": "rate of cache=false lookups. ARIN limit ≈ 0.83 req/s.",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 53},
+      "targets": [
+        {
+          "expr": "sum by (kind) (rate(rir2localdb_rdap_lookups_total{cached=\"false\"}[5m]))",
+          "legendFormat": "{{kind}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps"}}
+    },
+    {
+      "type": "timeseries",
+      "id": 42,
+      "title": "RDAP found vs not found (cache miss path)",
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 53},
+      "targets": [
+        {
+          "expr": "sum by (found) (rate(rir2localdb_rdap_lookups_total{cached=\"false\"}[5m]))",
+          "legendFormat": "found={{found}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+# Grafana dashboard provisioning. Указывает Grafana подхватить все
+# *.json файлы из этой директории и автоматически создать из них
+# dashboards в default folder.
+
+apiVersion: 1
+
+providers:
+  - name: rir2localdb
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
