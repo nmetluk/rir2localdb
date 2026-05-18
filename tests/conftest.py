@@ -160,3 +160,29 @@ async def pg_sync_run_id(pg_conn: asyncpg.Connection) -> int:
         "INSERT INTO sync_run (tier, status) VALUES ('core', 'running') RETURNING id"
     )
     return int(rid)
+
+
+@pytest_asyncio.fixture
+async def clean_db(test_database_url: str) -> AsyncIterator[asyncpg.Connection]:
+    """Autocommit-asyncpg conn с ``TRUNCATE … RESTART IDENTITY CASCADE`` до и после теста.
+
+    Используется тестами orchestrator'а и API, где код коммитит свою
+    транзакцию (``pg_conn``-фикстура с rollback-в-teardown не подходит,
+    потому что её rollback не отменит чужие commit'ы). Альтернатива
+    — пара отдельных физ.соединений и truncate-фикстура. Дёшево.
+
+    Tests fixture-уровня очищают и видят коммиченные данные через
+    одну и ту же ``clean_db`` connection, либо через свои новые
+    подключения (тогда состояние видно через PostgreSQL READ COMMITTED).
+    """
+    url = test_database_url.replace("+asyncpg", "")
+    conn = await asyncpg.connect(url)
+    truncate_sql = (
+        "TRUNCATE ip_allocation, asn_allocation, sync_file, sync_run RESTART IDENTITY CASCADE"
+    )
+    try:
+        await conn.execute(truncate_sql)
+        yield conn
+    finally:
+        await conn.execute(truncate_sql)
+        await conn.close()

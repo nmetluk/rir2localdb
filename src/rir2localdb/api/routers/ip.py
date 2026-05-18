@@ -47,9 +47,7 @@ async def lookup_ip(addr: str, request: Request) -> IpLookupResponse:
     try:
         ip = ip_address(addr)
     except ValueError as exc:
-        raise HTTPException(
-            status_code=400, detail=f"invalid IP address: {exc}"
-        ) from exc
+        raise HTTPException(status_code=400, detail=f"invalid IP address: {exc}") from exc
 
     sessionmaker = request.app.state.sessionmaker
     async with sessionmaker() as session:
@@ -63,8 +61,6 @@ async def lookup_ip(addr: str, request: Request) -> IpLookupResponse:
         row = result.mappings().first()
 
     if row is None:
-        raise HTTPException(
-            status_code=404, detail=f"no allocation found for {addr}"
-        )
+        raise HTTPException(status_code=404, detail=f"no allocation found for {addr}")
 
     return IpLookupResponse(address=str(ip), **dict(row))

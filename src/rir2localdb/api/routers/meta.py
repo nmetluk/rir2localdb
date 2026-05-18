@@ -23,24 +23,32 @@ async def status(request: Request) -> StatusResponse:
     try:
         async with sessionmaker() as session:
             latest_run = (
-                await session.execute(
-                    text(
-                        "SELECT id, tier, started_at, finished_at, "
-                        "       status, stats, error "
-                        "FROM sync_run ORDER BY started_at DESC LIMIT 1"
+                (
+                    await session.execute(
+                        text(
+                            "SELECT id, tier, started_at, finished_at, "
+                            "       status, stats, error "
+                            "FROM sync_run ORDER BY started_at DESC LIMIT 1"
+                        )
                     )
                 )
-            ).mappings().first()
+                .mappings()
+                .first()
+            )
             sources_rows = (
-                await session.execute(
-                    text(
-                        "SELECT url, rir, kind, last_status, last_fetched_at, "
-                        "       last_parsed_at, last_size "
-                        "FROM sync_file "
-                        "ORDER BY last_fetched_at DESC NULLS LAST"
+                (
+                    await session.execute(
+                        text(
+                            "SELECT url, rir, kind, last_status, last_fetched_at, "
+                            "       last_parsed_at, last_size "
+                            "FROM sync_file "
+                            "ORDER BY last_fetched_at DESC NULLS LAST"
+                        )
                     )
                 )
-            ).mappings().all()
+                .mappings()
+                .all()
+            )
         db_alive = True
     except Exception:
         latest_run = None

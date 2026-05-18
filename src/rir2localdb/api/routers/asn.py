@@ -37,8 +37,6 @@ async def lookup_asn(num: int, request: Request) -> AsnLookupResponse:
         row = result.mappings().first()
 
     if row is None:
-        raise HTTPException(
-            status_code=404, detail=f"no allocation found for AS{num}"
-        )
+        raise HTTPException(status_code=404, detail=f"no allocation found for AS{num}")
 
     return AsnLookupResponse(asn=num, **dict(row))

@@ -22,7 +22,6 @@ from pathlib import Path
 import asyncpg
 import httpx
 import pytest
-import pytest_asyncio
 
 from rir2localdb.config import Settings
 from rir2localdb.sources import Format, Rir, Source, Tier
@@ -55,22 +54,6 @@ def _make_source(
         md5_url=url + ".md5" if with_md5 else None,
         description="test source",
     )
-
-
-@pytest_asyncio.fixture
-async def clean_db(test_database_url: str) -> asyncpg.Connection:
-    """Asyncpg connection to test DB; TRUNCATE state tables before/after each test."""
-    url = test_database_url.replace("+asyncpg", "")
-    conn = await asyncpg.connect(url)
-    truncate_sql = (
-        "TRUNCATE ip_allocation, asn_allocation, sync_file, sync_run RESTART IDENTITY CASCADE"
-    )
-    try:
-        await conn.execute(truncate_sql)
-        yield conn
-    finally:
-        await conn.execute(truncate_sql)
-        await conn.close()
 
 
 @pytest.fixture
