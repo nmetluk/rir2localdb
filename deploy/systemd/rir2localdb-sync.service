@@ -1,0 +1,48 @@
+[Unit]
+Description=rir2localdb daily sync (core + rich tiers)
+Documentation=https://github.com/nmetluk/rir2localdb
+Wants=network-online.target postgresql.service
+After=network-online.target postgresql.service
+ConditionPathExists=/home/rir2local/rir2localdb/.venv/bin/rir2localdb
+
+[Service]
+Type=oneshot
+User=rir2local
+Group=rir2local
+WorkingDirectory=/home/rir2local/rir2localdb
+ExecStart=/home/rir2local/rir2localdb/.venv/bin/rir2localdb sync --tier core --tier rich
+
+# Журналирование
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=rir2localdb-sync
+
+# Sandbox / hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/rir2local/rir2localdb/data
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+
+# Resources — Stage 2 live прогон занял ~24 мин и ~1 GB RAM peak,
+# даём запас + лимит, чтобы рассыпавшийся sync не съел всю машину.
+TimeoutStartSec=2h
+MemoryMax=4G
+
+# Retry — oneshot не рестартится автоматически. При network flake
+# мы хотим, чтобы timer'овский следующий запуск ретрайнул через сутки.
+# Если нужно более частое retry — отдельная история для Stage 3-02.
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

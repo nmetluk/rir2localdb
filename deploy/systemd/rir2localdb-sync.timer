@@ -1,0 +1,15 @@
+[Unit]
+Description=Daily trigger for rir2localdb sync
+Documentation=https://github.com/nmetluk/rir2localdb
+Requires=rir2localdb-sync.service
+
+[Timer]
+# 03:00 UTC ежедневно — рано утром Европа, ночь Америка.
+# RIPE/APNIC обычно публикуют новый snapshot к 02:00 UTC.
+OnCalendar=*-*-* 03:00:00 UTC
+Persistent=true
+RandomizedDelaySec=15min
+Unit=rir2localdb-sync.service
+
+[Install]
+WantedBy=timers.target
