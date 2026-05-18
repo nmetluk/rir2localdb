@@ -133,6 +133,12 @@ RIR режет HTTPS быстрее, чем FTP. Спойлер: не режет
 - **first_seen_run / last_seen_run / stale records** — идентично
   `delegated_etl` (preserve `first_seen_run` на UPDATE; stale GC
   отложено в Stage 3).
+- **JSONB binary codec.** `apply_rpsl_etl` регистрирует на conn'е
+  jsonb-codec в `format="binary"` с version-байтом `\x01` префиксом
+  (encoder: `b"\x01" + json.dumps(v).encode()`; decoder: `json.loads(v[1:])`).
+  Это обязательно: `copy_records_to_table` всегда работает в binary
+  протоколе, text-codec там даёт `InternalClientError`. После регистрации
+  Python `dict` round-trip'ит через INSERT и SELECT.
 
 См. ADR-0007 для обоснования «одна таблица на тип, не per-(rir,type)»
 и docstring `src/rir2localdb/etl/rpsl_etl.py` для конкретики
