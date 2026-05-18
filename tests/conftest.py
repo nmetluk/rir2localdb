@@ -188,8 +188,13 @@ async def clean_db(
     _ = test_engine  # triggers session-scoped migrations
     url = test_database_url.replace("+asyncpg", "")
     conn = await asyncpg.connect(url)
+    # RPSL-таблицы (Stage 2) тоже включены: их использует API enrichment'ом
+    # и оркестратор в будущих rich-tier тестах. CASCADE — на случай если
+    # появятся FK между ними.
     truncate_sql = (
-        "TRUNCATE ip_allocation, asn_allocation, sync_file, sync_run RESTART IDENTITY CASCADE"
+        "TRUNCATE ip_allocation, asn_allocation, sync_file, sync_run, "
+        "inetnum, inet6num, aut_num, organisation, route, route6, as_block, role "
+        "RESTART IDENTITY CASCADE"
     )
     try:
         await conn.execute(truncate_sql)

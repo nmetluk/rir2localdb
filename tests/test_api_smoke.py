@@ -155,6 +155,163 @@ async def _seed_asn(
 
 
 # ---------------------------------------------------------------------------
+# Helpers — pre-populate RPSL-таблиц для enrichment-тестов.
+#
+# JSONB колонки записываются через JSON-строку (asyncpg по умолчанию
+# принимает str → JSONB). raw — минимальный {"<type>": [...]} dict для
+# валидной JSONB-строки; реальные тесты ETL'а проверяют content roundtrip.
+# ---------------------------------------------------------------------------
+
+
+async def _seed_inetnum(
+    conn: asyncpg.Connection,
+    run_id: int,
+    *,
+    rir: str = "ripe",
+    start: str = "193.0.0.0",
+    value: int = 256,
+    netname: str | None = "RIPE-NCC",
+    country: str | None = "NL",
+    org: str | None = "ORG-RIEN1-RIPE",
+    descr: str | None = "RIPE NCC",
+    status: str | None = "ASSIGNED PA",
+    admin_c: list[str] | None = None,
+    tech_c: list[str] | None = None,
+    mnt_by: list[str] | None = None,
+    source: str | None = "RIPE",
+) -> None:
+    start_int = int.from_bytes(bytes(int(p) for p in start.split(".")), "big")
+    await conn.execute(
+        """
+        INSERT INTO inetnum
+            (rir, start_text, value, range_v4, netname, country, descr, org,
+             admin_c, tech_c, status, mnt_by, source, raw,
+             first_seen_run, last_seen_run)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+                $14::jsonb, $15, $15)
+        """,
+        rir,
+        start,
+        value,
+        asyncpg.Range(start_int, start_int + value),
+        netname,
+        country,
+        descr,
+        org,
+        admin_c,
+        tech_c,
+        status,
+        mnt_by,
+        source,
+        f'{{"inetnum": ["{start} - seed"]}}',
+        run_id,
+    )
+
+
+async def _seed_inet6num(
+    conn: asyncpg.Connection,
+    run_id: int,
+    *,
+    rir: str = "ripe",
+    start: str = "2001:db8::",
+    prefix: int = 32,
+    netname: str | None = "TEST-NET-V6",
+    country: str | None = "NL",
+    org: str | None = "ORG-RIEN1-RIPE",
+    source: str | None = "RIPE",
+) -> None:
+    import ipaddress
+
+    start_int = int(ipaddress.IPv6Address(start))
+    end_int = start_int + (1 << (128 - prefix))
+    await conn.execute(
+        """
+        INSERT INTO inet6num
+            (rir, start_text, value, range_v6, netname, country, org, source, raw,
+             first_seen_run, last_seen_run)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $10)
+        """,
+        rir,
+        start,
+        prefix,
+        asyncpg.Range(Decimal(start_int), Decimal(end_int)),
+        netname,
+        country,
+        org,
+        source,
+        f'{{"inet6num": ["{start}/{prefix}"]}}',
+        run_id,
+    )
+
+
+async def _seed_aut_num(
+    conn: asyncpg.Connection,
+    run_id: int,
+    *,
+    rir: str = "ripe",
+    asn: int = 3333,
+    as_name: str | None = "RIPE-NCC-AS",
+    descr: str | None = "RIPE NCC",
+    org: str | None = "ORG-RIEN1-RIPE",
+    status: str | None = None,
+    source: str | None = "RIPE",
+) -> None:
+    await conn.execute(
+        """
+        INSERT INTO aut_num
+            (rir, asn, as_name, descr, org, status, source, raw,
+             first_seen_run, last_seen_run)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $9)
+        """,
+        rir,
+        asn,
+        as_name,
+        descr,
+        org,
+        status,
+        source,
+        f'{{"aut-num": ["AS{asn}"]}}',
+        run_id,
+    )
+
+
+async def _seed_organisation(
+    conn: asyncpg.Connection,
+    run_id: int,
+    *,
+    rir: str = "ripe",
+    org_handle: str = "ORG-RIEN1-RIPE",
+    org_name: str | None = "Reseaux IP Europeens Network Coordination Centre",
+    org_type: str | None = "RIR",
+    abuse_c: str | None = "AR17615-RIPE",
+    address: list[str] | None = None,
+    phone: list[str] | None = None,
+    email: list[str] | None = None,
+    source: str | None = "RIPE",
+) -> None:
+    await conn.execute(
+        """
+        INSERT INTO organisation
+            (rir, org_handle, org_name, org_type, abuse_c,
+             address, phone, email, source, raw,
+             first_seen_run, last_seen_run)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $11)
+        """,
+        rir,
+        org_handle,
+        org_name,
+        org_type,
+        abuse_c,
+        address,
+        phone,
+        email,
+        source,
+        f'{{"organisation": ["{org_handle}"]}}',
+        run_id,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Scenarios
 # ---------------------------------------------------------------------------
 
@@ -352,3 +509,149 @@ async def test_ip_overlap_returns_most_specific(
     assert data["start"] == "10.1.0.0"
     assert data["value"] == 65536  # /16, не /8
     assert data["rir"] == "ripencc"
+
+
+# ---------------------------------------------------------------------------
+# Stage 2: RPSL enrichment.
+# ---------------------------------------------------------------------------
+
+
+async def test_ip_lookup_with_rpsl_inetnum_only(
+    api_client: AsyncClient, clean_db: asyncpg.Connection
+) -> None:
+    """inetnum есть, organisation отсутствует → rpsl.inetnum != None,
+    rpsl.organisation == None."""
+    run_id = await _seed_sync_run(clean_db)
+    await _seed_ipv4(clean_db, run_id, rir="ripe", start="193.0.0.0", value=256)
+    await _seed_inetnum(clean_db, run_id, rir="ripe", start="193.0.0.0", value=256)
+    # без organisation
+
+    response = await api_client.get("/v1/ip/193.0.0.5")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["rpsl"] is not None
+    assert data["rpsl"]["inetnum"] is not None
+    assert data["rpsl"]["inetnum"]["netname"] == "RIPE-NCC"
+    assert data["rpsl"]["organisation"] is None  # orphan org-handle
+
+
+async def test_ip_lookup_with_rpsl_full(
+    api_client: AsyncClient, clean_db: asyncpg.Connection
+) -> None:
+    """inetnum + organisation → оба заполнены."""
+    run_id = await _seed_sync_run(clean_db)
+    await _seed_ipv4(clean_db, run_id, rir="ripe", start="193.0.0.0", value=256)
+    await _seed_inetnum(clean_db, run_id, rir="ripe", start="193.0.0.0", value=256)
+    await _seed_organisation(clean_db, run_id, rir="ripe", org_handle="ORG-RIEN1-RIPE")
+
+    response = await api_client.get("/v1/ip/193.0.0.5")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["rpsl"]["inetnum"]["netname"] == "RIPE-NCC"
+    assert data["rpsl"]["organisation"] is not None
+    assert data["rpsl"]["organisation"]["org_handle"] == "ORG-RIEN1-RIPE"
+    assert "Reseaux" in data["rpsl"]["organisation"]["org_name"]
+    assert data["rpsl"]["organisation"]["abuse_c"] == "AR17615-RIPE"
+
+
+async def test_ip_lookup_inet6num(api_client: AsyncClient, clean_db: asyncpg.Connection) -> None:
+    """IPv6 lookup попадает в inet6num, value=prefix_length."""
+    run_id = await _seed_sync_run(clean_db)
+    await _seed_ipv6(clean_db, run_id, rir="ripe", start="2001:db8::", prefix=32)
+    await _seed_inet6num(clean_db, run_id, rir="ripe", start="2001:db8::", prefix=32)
+
+    response = await api_client.get("/v1/ip/2001:db8::1")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["rpsl"]["inetnum"] is not None  # union включает inet6num
+    assert data["rpsl"]["inetnum"]["start"] == "2001:db8::"
+    assert data["rpsl"]["inetnum"]["value"] == 32
+    assert data["rpsl"]["inetnum"]["netname"] == "TEST-NET-V6"
+
+
+async def test_ip_lookup_no_rpsl_data(
+    api_client: AsyncClient, clean_db: asyncpg.Connection
+) -> None:
+    """ip_allocation есть, RPSL-таблицы пустые → rpsl != None, но оба поля None."""
+    run_id = await _seed_sync_run(clean_db)
+    await _seed_ipv4(clean_db, run_id, rir="arin", start="8.0.0.0", value=16777216)
+    # никаких inetnum/organisation
+
+    response = await api_client.get("/v1/ip/8.0.0.5")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["rpsl"] is not None
+    assert data["rpsl"]["inetnum"] is None
+    assert data["rpsl"]["organisation"] is None
+
+
+async def test_ip_lookup_include_rpsl_false(
+    api_client: AsyncClient, clean_db: asyncpg.Connection
+) -> None:
+    """?include_rpsl=false → rpsl целиком null, даже когда данные есть."""
+    run_id = await _seed_sync_run(clean_db)
+    await _seed_ipv4(clean_db, run_id, rir="ripe", start="193.0.0.0", value=256)
+    await _seed_inetnum(clean_db, run_id, rir="ripe", start="193.0.0.0", value=256)
+    await _seed_organisation(clean_db, run_id, rir="ripe", org_handle="ORG-RIEN1-RIPE")
+
+    response = await api_client.get("/v1/ip/193.0.0.5?include_rpsl=false")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["rpsl"] is None
+
+
+async def test_asn_lookup_with_rpsl_aut_num_and_org(
+    api_client: AsyncClient, clean_db: asyncpg.Connection
+) -> None:
+    """AS3333 → aut_num + organisation в rpsl."""
+    run_id = await _seed_sync_run(clean_db)
+    await _seed_asn(clean_db, run_id, rir="ripe", start_asn=3333, count=1)
+    await _seed_aut_num(clean_db, run_id, rir="ripe", asn=3333)
+    await _seed_organisation(clean_db, run_id, rir="ripe", org_handle="ORG-RIEN1-RIPE")
+
+    response = await api_client.get("/v1/asn/3333")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["rpsl"]["aut_num"] is not None
+    assert data["rpsl"]["aut_num"]["as_name"] == "RIPE-NCC-AS"
+    assert data["rpsl"]["organisation"] is not None
+    assert "Reseaux" in data["rpsl"]["organisation"]["org_name"]
+
+
+async def test_ip_lookup_picks_most_specific_inetnum(
+    api_client: AsyncClient, clean_db: asyncpg.Connection
+) -> None:
+    """Два overlapping inetnum: /16 и /24 — отвечаем /24."""
+    run_id = await _seed_sync_run(clean_db)
+    await _seed_ipv4(clean_db, run_id, rir="ripe", start="193.0.0.0", value=65536)  # /16
+    await _seed_inetnum(
+        clean_db, run_id, rir="ripe", start="193.0.0.0", value=65536, netname="RIPE-WIDE"
+    )
+    await _seed_inetnum(
+        clean_db, run_id, rir="ripe", start="193.0.0.0", value=256, netname="RIPE-NARROW"
+    )
+
+    response = await api_client.get("/v1/ip/193.0.0.5")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["rpsl"]["inetnum"]["netname"] == "RIPE-NARROW"
+    assert data["rpsl"]["inetnum"]["value"] == 256
+
+
+async def test_ip_lookup_orphan_org_handle(
+    api_client: AsyncClient, clean_db: asyncpg.Connection
+) -> None:
+    """inetnum.org указывает на org_handle, которого нет в organisation."""
+    run_id = await _seed_sync_run(clean_db)
+    await _seed_ipv4(clean_db, run_id, rir="ripe", start="193.0.0.0", value=256)
+    await _seed_inetnum(
+        clean_db, run_id, rir="ripe", start="193.0.0.0", value=256, org="ORG-NONEXISTENT-RIPE"
+    )
+    # никакой organisation
+
+    response = await api_client.get("/v1/ip/193.0.0.5")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["rpsl"]["inetnum"] is not None
+    assert data["rpsl"]["inetnum"]["org"] == "ORG-NONEXISTENT-RIPE"
+    assert data["rpsl"]["organisation"] is None
