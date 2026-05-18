@@ -165,6 +165,31 @@ async def test_healthz(api_client: AsyncClient, clean_db: asyncpg.Connection) ->
     assert response.json() == {"status": "ok"}
 
 
+async def test_readyz_ok(api_client: AsyncClient, clean_db: asyncpg.Connection) -> None:
+    response = await api_client.get("/v1/readyz")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready"}
+
+
+async def test_readyz_db_down(api_settings: Settings) -> None:
+    """Если sessionmaker сломан / БД недоступна — 503."""
+
+    class _BrokenSessionmaker:
+        def __call__(self) -> object:
+            raise RuntimeError("simulated DB down")
+
+    app = make_app(api_settings)
+    async with app.router.lifespan_context(app):
+        # Подменяем sessionmaker после startup'а на сломанный.
+        app.state.sessionmaker = _BrokenSessionmaker()
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/v1/readyz")
+    assert response.status_code == 503
+    assert "simulated DB down" in response.json()["detail"]
+
+
 async def test_lookup_ipv4_hit(api_client: AsyncClient, clean_db: asyncpg.Connection) -> None:
     run_id = await _seed_sync_run(clean_db)
     await _seed_ipv4(clean_db, run_id, rir="arin", cc="US", start="8.0.0.0", value=16777216)

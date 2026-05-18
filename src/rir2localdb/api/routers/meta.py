@@ -1,8 +1,8 @@
-"""``/v1/healthz`` и ``/v1/status``."""
+"""``/v1/healthz``, ``/v1/readyz``, ``/v1/status``."""
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import text
 
 from rir2localdb.api.schemas import HealthzResponse, StatusResponse
@@ -12,8 +12,24 @@ router = APIRouter()
 
 @router.get("/healthz", response_model=HealthzResponse)
 async def healthz() -> HealthzResponse:
-    """Liveness — не трогает БД. Для readiness см. ``/v1/status.db_alive``."""
+    """Liveness — не трогает БД. Для readiness см. ``/v1/readyz``."""
     return HealthzResponse()
+
+
+@router.get("/readyz")
+async def readyz(request: Request) -> dict[str, str]:
+    """Readiness — пингует БД через ``SELECT 1``.
+
+    Отделено от ``/healthz`` (liveness) сознательно — стандарт
+    k8s probes: liveness не должен зависеть от внешних состояний.
+    """
+    sessionmaker = request.app.state.sessionmaker
+    try:
+        async with sessionmaker() as session:
+            await session.execute(text("SELECT 1"))
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"db not ready: {exc}") from exc
+    return {"status": "ready"}
 
 
 @router.get("/status", response_model=StatusResponse)
