@@ -1,5 +1,7 @@
 # rir2localdb
 
+[![CI](https://github.com/nmetluk/rir2localdb/actions/workflows/ci.yml/badge.svg)](https://github.com/nmetluk/rir2localdb/actions/workflows/ci.yml)
+
 Утилита, которая ежедневно зеркалит публичные данные пяти RIR
 (AFRINIC, APNIC, ARIN, LACNIC, RIPE NCC), парсит их в PostgreSQL
 и отдаёт whois-подобную информацию по IP и ASN через REST API.

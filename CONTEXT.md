@@ -26,6 +26,18 @@
   `src/rir2localdb/sources.py`, документация (`docs/`, 10 файлов + 5 ADR).
 
 **Stage 1: Core sync + minimal API — ЗАКРЫТ ✅ (2026-05-18).**
+**Stage 1.50: Стабилизация — ЗАКРЫТА ✅ (2026-05-18).**
+
+После Stage 1 прошёл короткий блок «стабилизация перед Stage 2»
+(6 задач, `01-50-stabilization.md`):
+- `/v1/readyz` отделён от `healthz` (k8s probe split).
+- Per-RIR summary в `/v1/status` (`summary_by_rir: list[RirSummary]`).
+- ETL вычисляет `prefix_length` для CIDR-aligned IPv4 (open Q#5 closed).
+- Миграции перенесены в `src/rir2localdb/migrations/`,
+  `importlib.resources` в `_alembic_config` — wheel-ready.
+- GitHub Actions: `ci.yml` (push/PR, postgres service, ruff+mypy+alembic+pytest)
+  + `integration.yml` (schedule daily + dispatch, continue-on-error).
+- CI badge в README.
 
 DoD достигнут: `curl /v1/ip/8.8.8.8` → ARIN/US, `2001:4860:4860::8888`
 → ARIN/US, `AS15169` → ARIN/US после `rir2localdb sync --tier core`.
@@ -164,41 +176,45 @@ Live sync: 760k записей, 647k IP allocation + 113k ASN, ~102 секунд
   - YAML fix в notify-session-log: `grep -v _template`.
   - Детали: `.claude/session-log/01-04-sync-state.md`.
 
-Не сделано (follow-up'ы / Stage 2+):
+Не сделано (Stage 2):
 
-- [ ] CI workflow (`.github/workflows/ci.yml`) — ruff + mypy + pytest +
-  alembic round-trip. Простой single-workflow на ~10 минут;
-  отдельный follow-up до старта Stage 2.
-- [ ] Stage 2: RPSL rich-tier (см. `docs/08-roadmap.md` § Stage 2).
+- [ ] Stage 2: RPSL rich-tier (см. `docs/08-roadmap.md` § Stage 2 и
+  «Что делать дальше» ниже).
 
 ---
 
 ## Что делать дальше (Stage 1)
 
-**Stage 1 закрыт.** Дальше — два возможных направления:
+**Stage 1 + 1.50 закрыты. Stage 2 — RPSL rich-tier.**
 
-**A. CI workflow** (короткий follow-up, ~10 минут):
-- `.github/workflows/ci.yml`: setup Postgres сервис, `pip install -e .[dev]`,
-  `ruff check`, `mypy`, `pytest -m "not integration"`.
-- Опционально alembic round-trip как отдельный job.
-- Триггер на push + PR в main.
+Полный план — `docs/08-roadmap.md` § Stage 2. Ключевые блоки:
 
-**B. Stage 2 — RPSL rich-tier** (см. `docs/08-roadmap.md` § Stage 2):
-- Парсер RPSL (общий для RIPE / APNIC / AFRINIC).
-- Per-RIR таблицы: `inetnum` / `inet6num` / `aut-num` /
-  `organisation` / `route(6)` / `as-block`.
-- ETL для split-дампов, gzip-стриминг (RIPE inet6num ~36 МБ gzip,
-  ~500MB развёрнутый — потоковая обработка обязательна).
-- Расширение API: поле `rpsl` в ответах `/ip` и `/asn` с
-  netname / org_name / mnt-by / abuse-c.
-- Опциональный ARIN Bulk Whois коннектор (под env-ключ).
-- LACNIC RDAP-fallback.
+1. **Парсер RPSL** (`parsers/rpsl.py`) — общий потоковый,
+   gzip-stream. Объекты разделены пустой строкой; continuation lines
+   через space/tab/`+`; повторяющиеся атрибуты → массив. Спецификация
+   в `docs/05-parsers.md` § «RPSL».
+2. **Per-RIR таблицы** — миграция `0002_rpsl_tables`. Скелет
+   `ripe_inetnum` уже в `docs/03`. Аналогично для apnic/afrinic;
+   ARIN — отдельная история (см. ниже).
+3. **ETL для split-дампов** (`etl/rpsl_etl.py`). RIPE inet6num
+   ~36 МБ gzip, ~500MB развёрнутый — потоковая обработка обязательна.
+   Per-RIR диспатчер по `Source.rir`, маппинг RPSL объектов в
+   per-RIR таблицы.
+4. **Расширение API**: поле `rpsl` в ответах `/v1/ip/{addr}` и
+   `/v1/asn/{num}` с `netname` / `org_name` / `mnt-by` / `abuse-c`.
+5. **ARIN специально**: гибрид по плану из open-question #1.
+   - (a) Mirror `pub/rr/arin.db.gz` (только IRR: route/route6/as-set/
+     mntner) как tier `arin-rr`.
+   - (b) On-demand RDAP к `rdap.arin.net` для обогащения ownership
+     на lookup-time, с кэшированием в БД.
+   - (c) Bulk Whois API — опциональный fallback под env-ключ.
+6. **LACNIC RDAP-fallback** — опционально, с rate-limit.
 
-Рекомендация: сначала A (CI) — закрывает регрессионную защиту перед
-большим Stage 2. Потом B.
+**Первый шаг Stage 2:** парсер RPSL (можно начать без БД-миграции,
+on-disk тестировать). Затем миграция, потом ETL, потом API.
 
 **DoD Stage 2:** `curl /v1/ip/193.0.6.139` возвращает
-`rpsl.inetnum.netname` и `rpsl.organisation.org_name`.
+`rpsl.inetnum.netname` (RIPE-NCC) и `rpsl.organisation.org_name`.
 
 **Definition of Done для Stage 1:** на чистой машине проходит сценарий
 быстрого старта из `README.md`, `curl http://localhost:8000/v1/ip/8.8.8.8`
@@ -230,19 +246,13 @@ Live sync: 760k записей, 647k IP allocation + 113k ASN, ~102 секунд
 3. **Что считать «whois-ответом» в API.** Минимум — поля из delegated
    stats. Максимум — слияние с RPSL inetnum/aut-num/organisation.
    В Stage 1 ограничиваемся минимумом, в Stage 2 расширяем.
-4. **`prefix_length` для IPv4 CIDR-aligned записей.** В миграции
-   колонка `ip_allocation.prefix_length` оставлена NULL для v4 (как
-   описано в `docs/03`). Когда `value` — степень двойки, блок
-   фактически выровнен по CIDR, и ETL мог бы вычислять и заполнять
-   `prefix_length` — это удобно для API и человеко-читаемого вывода.
-   Решение по Stage 2: вычислять в ETL (cheaper) или в API on-the-fly
-   (proще). Сейчас не нужно — задача ETL, не миграции.
-5. **Wheel-packaging миграций.** `cli._alembic_config` резолвит
-   `script_location` через `Path(__file__).parents[2] / "migrations"` —
-   работает для `pip install -e .`, но при wheel-сборке `migrations/`
-   будет вне пакета. Stage 3 ops — переключить на
-   `importlib.resources.files("rir2localdb").joinpath("migrations")`
-   и включить `migrations/` в пакет через hatch build-config.
+4. ~~**`prefix_length` для IPv4 CIDR-aligned записей.**~~ ✅ **Закрыт
+   в 1.50** (commit `0ed70fe`): ETL `_record_to_ip_row` вычисляет
+   prefix_length для IPv4 если `value` — степень двойки.
+5. ~~**Wheel-packaging миграций.**~~ ✅ **Закрыт в 1.50**
+   (commit `8c6f3ec`): миграции перенесены в
+   `src/rir2localdb/migrations/`, `_alembic_config` использует
+   `importlib.resources.files()`.
 6. **`data_dir` validation.** `run_sync` создаёт `settings.data_dir`
    через `mkdir(parents=True, exist_ok=True)` — опечатка в `.env`
    создаст каталог в неожиданном месте. Stage 3 ops может добавить
