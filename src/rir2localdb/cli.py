@@ -124,7 +124,10 @@ def serve(
 
     settings = get_settings()
     configure_logging(level=settings.log_level, json_format=settings.log_format == "json")
-    uvicorn.run(make_app(settings), host=host, port=port)
+    # ``log_config=None`` — отключает uvicorn-default dictConfig, который
+    # бы перебил наш structlog setup. Без этого JSON-логи теряются в
+    # production-режиме (uvicorn вставляет свой formatter на root logger).
+    uvicorn.run(make_app(settings), host=host, port=port, log_config=None)
 
 
 @app.command()
