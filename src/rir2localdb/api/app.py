@@ -10,19 +10,23 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import time
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from rir2localdb import __version__
+from rir2localdb.api import metrics as metrics_module
 from rir2localdb.api.routers import asn as asn_router
 from rir2localdb.api.routers import ip as ip_router
 from rir2localdb.api.routers import meta as meta_router
 from rir2localdb.config import Settings, get_settings
 from rir2localdb.db.engine import make_engine
+
+_METRICS_PATH = "/v1/metrics"
 
 
 def make_app(settings: Settings | None = None) -> FastAPI:
@@ -52,9 +56,49 @@ def make_app(settings: Settings | None = None) -> FastAPI:
         description="Daily mirror of RIR data with whois-like REST API.",
         lifespan=lifespan,
     )
+
+    @app.middleware("http")
+    async def prometheus_middleware(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        """Inc ``http_requests_total`` + observe ``http_request_duration_seconds``.
+
+        ``/v1/metrics`` сам исключён, иначе на каждый Prometheus scrape
+        счётчик растёт — это не наблюдаемая нагрузка, это сам мониторинг.
+
+        ``endpoint`` label — route template (например ``/v1/ip/{addr}``),
+        не concrete path. Иначе cardinality explosion на каждый
+        уникальный IP / ASN. Если FastAPI не смог зарезолвить route
+        (404 на неизвестный path), fall-back на ``request.url.path``
+        — таких events немного.
+        """
+        if request.url.path == _METRICS_PATH:
+            return await call_next(request)
+
+        start = time.perf_counter()
+        response = await call_next(request)
+        duration = time.perf_counter() - start
+
+        route = request.scope.get("route")
+        endpoint = getattr(route, "path", None) or request.url.path
+
+        metrics_module.http_requests_total.labels(
+            method=request.method,
+            endpoint=endpoint,
+            status=str(response.status_code),
+        ).inc()
+        metrics_module.http_request_duration_seconds.labels(
+            method=request.method,
+            endpoint=endpoint,
+        ).observe(duration)
+
+        return response
+
     app.include_router(ip_router.router, prefix="/v1")
     app.include_router(asn_router.router, prefix="/v1")
     app.include_router(meta_router.router, prefix="/v1")
+    app.include_router(metrics_module.router, prefix="/v1")
 
     @app.get("/")
     async def root() -> dict[str, Any]:
@@ -62,7 +106,13 @@ def make_app(settings: Settings | None = None) -> FastAPI:
             "name": "rir2localdb",
             "version": __version__,
             "docs": "/docs",
-            "v1": ["/v1/ip/{addr}", "/v1/asn/{num}", "/v1/status", "/v1/healthz"],
+            "v1": [
+                "/v1/ip/{addr}",
+                "/v1/asn/{num}",
+                "/v1/status",
+                "/v1/healthz",
+                "/v1/metrics",
+            ],
         }
 
     return app
