@@ -157,9 +157,7 @@ async def run_sync(
                 # ETL COPY) добывается только когда нужен — после первой
                 # SQLAlchemy-операции, чтобы BEGIN уже был отправлен на
                 # сервер и asyncpg видел себя внутри транзакции.
-                async with AsyncSession(
-                    bind=connection, expire_on_commit=False
-                ) as session:
+                async with AsyncSession(bind=connection, expire_on_commit=False) as session:
                     insert_result = await session.execute(
                         text(
                             "INSERT INTO sync_run (tier, status) "
@@ -210,9 +208,7 @@ async def run_sync(
                                     )
                                 counters.add(outcome)
                             except Exception as exc:
-                                logger.exception(
-                                    "source %s failed: %s", source.url, exc
-                                )
+                                logger.exception("source %s failed: %s", source.url, exc)
                                 counters.files_errored += 1
 
                     status: Literal["success", "failed"]
@@ -222,9 +218,7 @@ async def run_sync(
                         and counters.files_errored == counters.total_sources
                     ):
                         status = "failed"
-                        final_error = (
-                            f"all {counters.files_errored} source(s) failed"
-                        )
+                        final_error = f"all {counters.files_errored} source(s) failed"
                     else:
                         status = "success"
                         final_error = None
@@ -366,9 +360,7 @@ def _build_summary(
     )
 
 
-async def _finalize_sync_run(
-    session: AsyncSession, run_id: int, summary: SyncRunSummary
-) -> None:
+async def _finalize_sync_run(session: AsyncSession, run_id: int, summary: SyncRunSummary) -> None:
     """UPDATE sync_run в финальное состояние, кладёт summary в stats jsonb.
 
     Идёт через SQLAlchemy session (а не raw asyncpg), чтобы UPDATE
@@ -376,9 +368,7 @@ async def _finalize_sync_run(
     rollback может оставить эту строку закоммиченной.
     """
     stats_payload: dict[str, Any] = {
-        k: v
-        for k, v in asdict(summary).items()
-        if k not in ("run_id", "tier", "status", "error")
+        k: v for k, v in asdict(summary).items() if k not in ("run_id", "tier", "status", "error")
     }
     await session.execute(
         text(

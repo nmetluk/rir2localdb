@@ -126,17 +126,9 @@ def _print_summary(summary: SyncRunSummary, *, dry_run: bool) -> None:
         f"unchanged={summary.files_unchanged} "
         f"errored={summary.files_errored}"
     )
-    typer.echo(
-        f"  parser: records_total={summary.parser_records_total}"
-    )
-    typer.echo(
-        f"  etl ip:  inserted={summary.etl_ip_inserted} "
-        f"updated={summary.etl_ip_updated}"
-    )
-    typer.echo(
-        f"  etl asn: inserted={summary.etl_asn_inserted} "
-        f"updated={summary.etl_asn_updated}"
-    )
+    typer.echo(f"  parser: records_total={summary.parser_records_total}")
+    typer.echo(f"  etl ip:  inserted={summary.etl_ip_inserted} updated={summary.etl_ip_updated}")
+    typer.echo(f"  etl asn: inserted={summary.etl_asn_inserted} updated={summary.etl_asn_updated}")
     typer.echo(f"  duration: {summary.duration_ms} ms")
     if summary.error:
         typer.echo(f"  error: {summary.error}", err=True)

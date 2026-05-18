@@ -63,8 +63,7 @@ async def clean_db(test_database_url: str) -> asyncpg.Connection:
     url = test_database_url.replace("+asyncpg", "")
     conn = await asyncpg.connect(url)
     truncate_sql = (
-        "TRUNCATE ip_allocation, asn_allocation, sync_file, sync_run "
-        "RESTART IDENTITY CASCADE"
+        "TRUNCATE ip_allocation, asn_allocation, sync_file, sync_run RESTART IDENTITY CASCADE"
     )
     try:
         await conn.execute(truncate_sql)
@@ -96,9 +95,7 @@ def patch_http(
         def fake_factory(settings: Settings) -> httpx.AsyncClient:
             return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
-        monkeypatch.setattr(
-            "rir2localdb.sync.orchestrator.make_http_client", fake_factory
-        )
+        monkeypatch.setattr("rir2localdb.sync.orchestrator.make_http_client", fake_factory)
 
     yield install
 
@@ -113,9 +110,7 @@ def patch_sources(
         def fake_for_tiers(_tiers: object) -> tuple[Source, ...]:
             return tuple(sources)
 
-        monkeypatch.setattr(
-            "rir2localdb.sync.orchestrator.sources_for_tiers", fake_for_tiers
-        )
+        monkeypatch.setattr("rir2localdb.sync.orchestrator.sources_for_tiers", fake_for_tiers)
 
     yield install
 
@@ -151,9 +146,7 @@ async def test_happy_path_one_source_new(
     assert summary.etl_ip_inserted == 1
     assert summary.error is None
 
-    rows = await clean_db.fetch(
-        "SELECT rir, family, value FROM ip_allocation"
-    )
+    rows = await clean_db.fetch("SELECT rir, family, value FROM ip_allocation")
     assert len(rows) == 1
     assert rows[0]["rir"] == "ripencc"
     assert rows[0]["family"] == 4
@@ -171,9 +164,7 @@ async def test_unchanged_skips_etl(
     patch_http: Callable[[Callable[[httpx.Request], httpx.Response]], None],
     patch_sources: Callable[[list[Source]], None],
 ) -> None:
-    source = _make_source(
-        url="https://test.example.invalid/ripencc/delegated", with_md5=False
-    )
+    source = _make_source(url="https://test.example.invalid/ripencc/delegated", with_md5=False)
     patch_sources([source])
 
     # Pre-populate sync_file так, чтобы fetch получил previous.last_etag
@@ -217,12 +208,8 @@ async def test_one_source_error_others_succeed(
     patch_http: Callable[[Callable[[httpx.Request], httpx.Response]], None],
     patch_sources: Callable[[list[Source]], None],
 ) -> None:
-    s_fail = _make_source(
-        url="https://test.example.invalid/fail/delegated", rir=Rir.RIPE
-    )
-    s_ok = _make_source(
-        url="https://test.example.invalid/ok/delegated", rir=Rir.APNIC
-    )
+    s_fail = _make_source(url="https://test.example.invalid/fail/delegated", rir=Rir.RIPE)
+    s_ok = _make_source(url="https://test.example.invalid/ok/delegated", rir=Rir.APNIC)
     patch_sources([s_fail, s_ok])
 
     def handler(req: httpx.Request) -> httpx.Response:
