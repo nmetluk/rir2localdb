@@ -474,3 +474,35 @@ async def test_stats_counts_seen_unknown_malformed_separately(
     assert stats.objects_skipped_malformed == 1
     assert stats.objects_by_type == {"inetnum": 3, "mntner": 1}
     assert stats.upsert_inserted["inetnum"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Followup: ARIN IRR zero-padded IPv4 prefix normalization.
+# ---------------------------------------------------------------------------
+
+
+async def test_route_arin_zero_padded_prefix_normalized(
+    pg_conn: asyncpg.Connection, pg_sync_run_id: int
+) -> None:
+    """ARIN IRR publishes prefixes like 069.031.132.000/23 (zero-padded
+    octets, non-RFC-3986). The ETL canonicalizes them via
+    ``_canonicalize_v4_prefix`` before passing to ``ipaddress.IPv4Network``,
+    and stores the canonical form in the ``route`` table.
+    """
+    obj = _obj(
+        ("route", "069.031.132.000/23"),
+        ("origin", "AS65000"),
+        ("source", "ARIN"),
+    )
+
+    stats = await apply_rpsl_etl(pg_conn, iter([obj]), rir="arin", run_id=pg_sync_run_id)
+
+    assert stats.objects_seen == 1
+    assert stats.upsert_inserted.get("route", 0) == 1
+
+    row = await pg_conn.fetchrow(
+        "SELECT prefix::text AS prefix, origin FROM route WHERE rir = 'arin' LIMIT 1"
+    )
+    assert row is not None
+    assert row["prefix"] == "69.31.132.0/23"
+    assert row["origin"] == "AS65000"
