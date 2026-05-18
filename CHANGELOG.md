@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `deploy/systemd/rir2localdb-serve.service` — systemd-юнит для долгоживущего
+  HTTP API. Параметризуется через `/etc/rir2localdb/serve.env` (`HOST`/`PORT`).
+  Hardened sandbox по образцу sync.service; `AF_NETLINK` добавлен в
+  `RestrictAddressFamilies` для async DNS resolution.
+- `scripts/install-systemd.sh` теперь ставит и `serve.service` (`enable` без
+  autostart), создаёт `/etc/rir2localdb/` для override-файлов.
+- Документация по deployment HTTP API через systemd с примерами override.
+
+### Fixed
+
+- CLI `serve` теперь вызывает `uvicorn.run(..., log_config=None)` — без
+  этого uvicorn перебивал structlog setup и в production-режиме JSON-логи
+  терялись.
+
+### Notes
+
+- `serve.service` НЕ стартует автоматически после `install-systemd.sh` —
+  оператор сам решает когда (например, после первого `sync` для prepop'а БД).
+- Дефолтный bind `127.0.0.1:8000` — safe default; для exposure нужен явный
+  override.
+
 ## [0.1.0] — 2026-05-18
 
 Initial public release. Functionally complete end-to-end pipeline from RIR
