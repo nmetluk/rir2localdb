@@ -511,6 +511,26 @@ def _first(obj: RpslObject, key: str) -> str | None:
     return vals[0] if vals else None
 
 
+def _canonicalize_v4_prefix(prefix: str) -> str:
+    """Strip leading zeros from each octet of an IPv4 CIDR prefix.
+
+    ARIN IRR publishes prefixes like ``069.031.132.000/23`` which
+    ``ipaddress.IPv4Network`` rejects per RFC 3986 § 7.4. We normalize
+    them to canonical form (``69.31.132.0/23``) before parsing.
+
+    Any non-IPv4-shaped string is returned unchanged — downstream
+    validation in IPv4Network will reject it normally.
+    """
+    addr, slash, suffix = prefix.partition("/")
+    try:
+        octets = [str(int(o)) for o in addr.split(".")]
+    except ValueError:
+        return prefix
+    if len(octets) != 4:
+        return prefix
+    return ".".join(octets) + (slash + suffix if slash else "")
+
+
 # ---------------------------------------------------------------------------
 # Маппинги RpslObject → staging-row(s).
 # Каждый возвращает кортеж в порядке соответствующего ``_<TABLE>_COLUMNS``.
@@ -628,7 +648,10 @@ def _to_organisation_row(obj: RpslObject, rir: str, run_id: int) -> tuple[Any, .
 
 
 def _to_route_rows(obj: RpslObject, rir: str, run_id: int) -> list[tuple[Any, ...]]:
-    prefix_str = (obj["route"][0] if obj.get("route") else "").strip()
+    # ARIN IRR публикует ``069.031.132.000/23``-style prefix'ы, которые
+    # IPv4Network отвергает по RFC 3986 §7.4. Канонизируем до парсинга
+    # и сохраняем уже canonical форму в БД.
+    prefix_str = _canonicalize_v4_prefix((obj["route"][0] if obj.get("route") else "").strip())
     try:
         ipaddress.IPv4Network(prefix_str, strict=False)
     except (ipaddress.AddressValueError, ValueError):
