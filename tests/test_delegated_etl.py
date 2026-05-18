@@ -306,9 +306,7 @@ async def test_ipv4_cidr_aligned_sets_prefix_length(
         _make_record("ipv4", "10.0.0.0", 256, cc="JP"),  # /24
     ]
     await apply_delegated_etl(pg_conn, records, pg_sync_run_id)
-    rows = await pg_conn.fetch(
-        "SELECT value, prefix_length FROM ip_allocation ORDER BY value DESC"
-    )
+    rows = await pg_conn.fetch("SELECT value, prefix_length FROM ip_allocation ORDER BY value DESC")
     assert len(rows) == 3
     assert rows[0]["value"] == 16777216 and rows[0]["prefix_length"] == 8
     assert rows[1]["value"] == 65536 and rows[1]["prefix_length"] == 16
@@ -325,9 +323,7 @@ async def test_ipv4_unaligned_keeps_prefix_length_none(
         [_make_record("ipv4", "10.0.0.0", 20480, cc="JP")],  # объединение CIDR
         pg_sync_run_id,
     )
-    row = await pg_conn.fetchrow(
-        "SELECT prefix_length FROM ip_allocation WHERE value = 20480"
-    )
+    row = await pg_conn.fetchrow("SELECT prefix_length FROM ip_allocation WHERE value = 20480")
     assert row["prefix_length"] is None
 
 

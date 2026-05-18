@@ -182,9 +182,7 @@ async def test_readyz_db_down(api_settings: Settings) -> None:
     async with app.router.lifespan_context(app):
         # Подменяем sessionmaker после startup'а на сломанный.
         app.state.sessionmaker = _BrokenSessionmaker()
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/v1/readyz")
     assert response.status_code == 503
     assert "simulated DB down" in response.json()["detail"]
