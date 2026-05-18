@@ -48,6 +48,15 @@ curl -s http://127.0.0.1:8000/v1/ip/2001:4860:4860::8888 | python -m json.tool
 curl -s http://127.0.0.1:8000/v1/asn/15169 | python -m json.tool
 curl -s http://127.0.0.1:8000/v1/status | python -m json.tool
 
+# 9. Stage 2: RPSL-обогащение (inetnum + organisation) — после
+#    `rir2localdb sync --tier rich` (см. ADR-0006). Ответ содержит
+#    блок `rpsl` с netname/org_name/abuse_c/etc:
+curl -s http://127.0.0.1:8000/v1/ip/193.0.6.139 | python -m json.tool
+curl -s http://127.0.0.1:8000/v1/asn/3333 | python -m json.tool
+
+# Опционально отключить RPSL-обогащение для bandwidth-sensitive клиентов:
+curl -s 'http://127.0.0.1:8000/v1/ip/8.8.8.8?include_rpsl=false' | python -m json.tool
+
 # OpenAPI docs:
 # http://127.0.0.1:8000/docs
 ```

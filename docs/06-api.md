@@ -105,39 +105,115 @@
 
 ## Эндпоинты Stage 2 (RPSL)
 
-Добавляется поле `rpsl` в ответе `/ip` и `/asn`:
+В Stage 2-04 ответы `/v1/ip/{addr}` и `/v1/asn/{num}` обогащаются
+полем `rpsl`. Контракт обоих:
+
+- `rpsl: null` — клиент попросил `?include_rpsl=false`.
+- `rpsl: {...}` — блок присутствует. Поля внутри (`inetnum` /
+  `inet6num` / `aut_num` / `organisation`) могут быть `null`, если
+  данных нет (RPSL-дамп ещё не загружен, либо адрес/ASN не покрыт).
+
+Различие между «не запросили» (`rpsl: null`) и «запросили, не нашли»
+(`rpsl: { inetnum: null, organisation: null }`) важно: первое не
+требует ничего пересчитывать, второе — сигнал «попробуйте сделать
+sync rich-tier».
+
+**Пример полного ответа `/v1/ip/193.0.6.139` (RIPE-блок):**
 
 ```json
 {
-  "query": "193.0.6.139",
-  "allocations": [ ... ],         // как раньше, из delegated
+  "address": "193.0.6.139",
+  "family": 4,
+  "rir": "ripencc",
+  "cc": "NL",
+  "start": "193.0.0.0",
+  "value": 65536,
+  "prefix_length": null,
+  "status": "allocated",
+  "allocated_on": "1992-06-09",
+  "opaque_id": "ripe",
+  "first_seen_run": 1,
+  "last_seen_run": 1,
   "rpsl": {
     "inetnum": {
-      "range": "193.0.6.128 - 193.0.6.255",
-      "netname": "RIPE-NCC-MNT",
+      "rir": "ripe",
+      "start": "193.0.6.128",
+      "value": 128,
+      "netname": "RIPE-NCC",
       "country": "NL",
       "descr": "RIPE Network Coordination Centre",
+      "org": "ORG-RIEN1-RIPE",
+      "admin_c": ["RD123-RIPE"],
+      "tech_c": ["OPS4-RIPE"],
       "status": "ASSIGNED PA",
-      "org_handle": "ORG-RIEN1-RIPE",
       "mnt_by": ["RIPE-NCC-MNT"],
       "created": "2003-03-17T12:15:57Z",
       "last_modified": "2017-12-04T14:46:39Z",
       "source": "RIPE"
     },
     "organisation": {
-      "handle": "ORG-RIEN1-RIPE",
+      "rir": "ripe",
+      "org_handle": "ORG-RIEN1-RIPE",
       "org_name": "Reseaux IP Europeens Network Coordination Centre",
       "org_type": "RIR",
-      "address": [...],
-      "abuse_c": "AR17615-RIPE"
+      "abuse_c": "AR17615-RIPE",
+      "address": ["Stationsplein 11", "1012 AB Amsterdam", "Netherlands"],
+      "phone": ["+31 20 535 4444"],
+      "email": ["hostmaster@ripe.net"],
+      "fax_no": null,
+      "mnt_ref": ["RIPE-NCC-HM-MNT"],
+      "mnt_by": ["RIPE-NCC-MNT"],
+      "created": "2004-04-17T12:00:00Z",
+      "last_modified": "2020-09-10T08:21:12Z",
+      "source": "RIPE"
     }
-  },
-  "sources": ["delegated", "rpsl"]
+  }
 }
 ```
 
-Для ARIN — `rpsl` отсутствует (если нет Bulk Whois key), либо
-содержит данные из ARIN Bulk Whois.
+**Пример полного ответа `/v1/asn/3333`:**
+
+```json
+{
+  "asn": 3333,
+  "rir": "ripencc",
+  "cc": "NL",
+  "start_asn": 3333,
+  "count": 1,
+  "status": "allocated",
+  "rpsl": {
+    "aut_num": {
+      "rir": "ripe",
+      "asn": 3333,
+      "as_name": "RIPE-NCC-AS",
+      "descr": "Reseaux IP Europeens Network Coordination Centre",
+      "org": "ORG-RIEN1-RIPE",
+      "admin_c": ["BRD-RIPE"],
+      "tech_c": ["OPS4-RIPE"],
+      "status": "ASSIGNED",
+      "mnt_by": ["RIPE-NCC-MNT"],
+      "source": "RIPE"
+    },
+    "organisation": { ... }
+  }
+}
+```
+
+**Outer query параметр.** `?include_rpsl=false` (default `true`)
+выключает обогащение полностью; в ответе `"rpsl": null`. Это полезно
+для bandwidth-sensitive батчевых клиентов, которым нужны только
+delegated-данные.
+
+**Cross-RIR org_handle.** RPSL допускает orphan-ссылки на
+`organisation` (legacy / cross-RIR). Маппинг идёт по `(rir,
+org_handle)`; если соответствия нет — `rpsl.organisation` будет `null`,
+а `rpsl.inetnum.org` содержит исходный handle для трассировки.
+
+**Для ARIN-данных.** ARIN не публикует RPSL-дампы кроме ARIN IRR
+(routes/route6/as-sets/mntner). Therefore `/v1/ip/<US-addr>` пока
+будет иметь `rpsl.inetnum = null`, `rpsl.organisation = null`. Stage
+2-05 добавит ARIN IRR данные для route'ов; Stage 2-06 — RDAP fallback
+для ownership.
 
 ## Что не делаем в API
 
