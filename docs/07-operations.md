@@ -48,51 +48,72 @@ worker запускаются локально из venv — так быстре
 
 1. **api** — `uvicorn rir2localdb.api.app:app --host 0.0.0.0 --port 8000`
    (через gunicorn+uvicorn-worker в проде).
-2. **sync worker** — раз в сутки выполняет `rir2localdb sync --tier core`
-   (плюс `--tier rich` на Stage 2). Запускается через:
+2. **sync worker** — раз в сутки выполняет
+   `rir2localdb sync --tier core --tier rich`. Запускается через
+   systemd timer; см. §«Daily sync via systemd» ниже.
 
-### Вариант A: systemd timer (рекомендуется для bare metal)
+### Daily sync via systemd
 
-`/etc/systemd/system/rir2localdb-sync.service`:
-```ini
-[Unit]
-Description=rir2localdb daily sync
-After=network-online.target postgresql.service
-Wants=network-online.target
+Unit-файлы лежат в `deploy/systemd/` (`rir2localdb-sync.service` +
+`rir2localdb-sync.timer`). Установка одной командой:
 
-[Service]
-Type=oneshot
-User=rir2localdb
-EnvironmentFile=/etc/rir2localdb/env
-ExecStart=/opt/rir2localdb/.venv/bin/rir2localdb sync --tier core
-TimeoutStartSec=2h
+```bash
+sudo bash scripts/install-systemd.sh
 ```
 
-`/etc/systemd/system/rir2localdb-sync.timer`:
-```ini
-[Unit]
-Description=rir2localdb daily sync
+Скрипт:
+- копирует unit'ы в `/etc/systemd/system/`,
+- прогоняет `systemd-analyze verify` (sanity-check синтаксиса),
+- `daemon-reload` + `enable --now` для timer'а,
+- печатает следующее запланированное срабатывание.
 
-[Timer]
-OnCalendar=*-*-* 03:00:00 UTC
-Persistent=true
-RandomizedDelaySec=600
-Unit=rir2localdb-sync.service
+**Расписание.** `OnCalendar=*-*-* 03:00:00 UTC` ежедневно, плюс
+`RandomizedDelaySec=15min` (anti thundering herd на RIR-зеркалах).
+`Persistent=true` — если машина была выключена в 03:00, при загрузке
+догонит.
 
-[Install]
-WantedBy=timers.target
+**Hardening.** Service запускается под user `rir2local` с sandbox:
+`ProtectHome=read-only` + `ReadWritePaths=/home/rir2local/rir2localdb/data`
+(только cache писабельный); `ProtectSystem=strict`, `PrivateTmp=true`,
+`MemoryDenyWriteExecute=true`, `RestrictAddressFamilies=AF_INET AF_INET6
+AF_UNIX`. `MemoryMax=4G` (Stage 2 peak ~1 GB, 4× запас); `TimeoutStartSec=2h`
+(Stage 2 ran 24 мин, 5× запас).
+
+**Команды для эксплуатации:**
+
+```bash
+# Статус и расписание
+systemctl status rir2localdb-sync.timer
+systemctl list-timers rir2localdb-sync.timer
+
+# Manual smoke (один запуск)
+systemctl start rir2localdb-sync.service
+
+# Логи в реальном времени
+journalctl -u rir2localdb-sync.service -f
+
+# Логи последнего run'а
+journalctl -u rir2localdb-sync.service --since "1 hour ago"
+
+# Изменить расписание (создаст override в /etc/systemd/system/<unit>.d/override.conf)
+systemctl edit rir2localdb-sync.timer
+
+# Отключить sync (timer останется в системе, не сработает)
+systemctl disable --now rir2localdb-sync.timer
 ```
 
-### Вариант B: cron
+### Альтернативные варианты запуска
+
+systemd timer выше — рекомендуемый вариант для bare metal. Если он
+не подходит:
+
+**cron** (минимальный, без sandbox-hardening):
 
 ```cron
-0 3 * * * rir2localdb /opt/rir2localdb/.venv/bin/rir2localdb sync --tier core >> /var/log/rir2localdb/sync.log 2>&1
+0 3 * * * rir2local /home/rir2local/rir2localdb/.venv/bin/rir2localdb sync --tier core --tier rich >> /var/log/rir2localdb/sync.log 2>&1
 ```
 
-### Вариант C: Docker / Kubernetes CronJob
-
-В образе есть entrypoint `rir2localdb`. K8s манифест — отдельно
-в Stage 3, скелет в `deploy/k8s/` (не в Stage 1).
+**Docker / Kubernetes CronJob** — образ + манифесты будут в Stage 3-04.
 
 ## Переменные окружения
 

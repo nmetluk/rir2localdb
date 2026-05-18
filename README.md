@@ -67,6 +67,17 @@ rir2localdb status --json | jq '.recent_runs[0].status'
 # http://127.0.0.1:8000/docs
 ```
 
+### Production deployment (Linux + systemd)
+
+```bash
+sudo bash scripts/install-systemd.sh
+systemctl status rir2localdb-sync.timer  # должен быть active (waiting)
+```
+
+Sync будет запускаться ежедневно в 03:00 UTC. Логи — через
+`journalctl -u rir2localdb-sync`. Подробности и hardening —
+[`docs/07-operations.md`](docs/07-operations.md) § «Daily sync via systemd».
+
 ## Документация
 
 - [`docs/00-overview.md`](docs/00-overview.md) — цели, область применения, не-цели
