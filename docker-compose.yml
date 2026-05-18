@@ -6,8 +6,6 @@ services:
       POSTGRES_DB: rir2localdb
       POSTGRES_USER: rir2localdb
       POSTGRES_PASSWORD: rir2localdb
-    ports:
-      - "5432:5432"
     volumes:
       - rir2localdb-pg-data:/var/lib/postgresql/data
     healthcheck:
@@ -17,5 +15,60 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # One-shot migration runner — бежит до старта api.
+  # Запускается явно: `docker compose run --rm migrate`.
+  # ``profiles: ["migrate"]`` исключает из default `up`.
+  migrate:
+    image: rir2localdb:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      RIR2LOCALDB_DATABASE_URL: postgresql+asyncpg://rir2localdb:rir2localdb@postgres:5432/rir2localdb
+    command: ["migrate"]
+    profiles: ["migrate"]
+
+  api:
+    image: rir2localdb:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rir2localdb-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      RIR2LOCALDB_DATABASE_URL: postgresql+asyncpg://rir2localdb:rir2localdb@postgres:5432/rir2localdb
+      RIR2LOCALDB_LOG_FORMAT: json
+      RIR2LOCALDB_LOG_LEVEL: INFO
+    ports:
+      - "8000:8000"
+    volumes:
+      - rir2localdb-data:/var/lib/rir2localdb/data
+    restart: unless-stopped
+
+  # Sync — НЕ persistent service. Запускается через:
+  #   docker compose run --rm sync
+  # …или из host-cron, k8s CronJob, и т.п. См. docs/07.
+  sync:
+    image: rir2localdb:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      RIR2LOCALDB_DATABASE_URL: postgresql+asyncpg://rir2localdb:rir2localdb@postgres:5432/rir2localdb
+      RIR2LOCALDB_LOG_FORMAT: json
+    volumes:
+      - rir2localdb-data:/var/lib/rir2localdb/data
+    command: ["sync", "--tier", "core", "--tier", "rich"]
+    profiles: ["sync"]
+
 volumes:
   rir2localdb-pg-data:
+  rir2localdb-data:
