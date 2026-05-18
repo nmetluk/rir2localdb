@@ -5,6 +5,9 @@ JOIN на ``organisation`` по ``(rir, org_handle)``. Cross-RIR ссылки
 на org допустимы; если org-handle висит orphan'ом —
 ``rpsl.organisation`` будет ``null``.
 
+Stage 3-03: stale-records скрываются по умолчанию. ``?include_stale=
+true`` показывает в т.ч. помеченные GC.
+
 Query-параметр ``?include_rpsl=false`` отключает обогащение.
 """
 
@@ -28,9 +31,10 @@ _ASN_MAX: int = 2**32 - 1  # 32-bit ASN, IANA-ограничение
 _ASN_SQL = text(
     """
     SELECT rir, cc, start_asn, count, status, allocated_on,
-           opaque_id, first_seen_run, last_seen_run
+           opaque_id, first_seen_run, last_seen_run, is_stale
     FROM asn_allocation
     WHERE asn_range @> CAST(:asn AS int8)
+      AND (is_stale = FALSE OR :include_stale)
     ORDER BY upper(asn_range) - lower(asn_range) ASC
     LIMIT 1
     """
@@ -41,7 +45,7 @@ _AUT_NUM_RPSL_SQL = text(
     """
     SELECT
         a.rir, a.asn, a.as_name, a.descr, a.org, a.admin_c, a.tech_c,
-        a.status, a.mnt_by, a.created, a.last_modified, a.source,
+        a.status, a.mnt_by, a.created, a.last_modified, a.source, a.is_stale,
         o.rir            AS o_rir,
         o.org_handle     AS o_org_handle,
         o.org_name       AS o_org_name,
@@ -55,11 +59,14 @@ _AUT_NUM_RPSL_SQL = text(
         o.mnt_by         AS o_mnt_by,
         o.created        AS o_created,
         o.last_modified  AS o_last_modified,
-        o.source         AS o_source
+        o.source         AS o_source,
+        o.is_stale       AS o_is_stale
     FROM aut_num a
     LEFT JOIN organisation o
         ON o.rir = a.rir AND o.org_handle = a.org
+        AND (o.is_stale = FALSE OR :include_stale)
     WHERE a.asn = :asn
+      AND (a.is_stale = FALSE OR :include_stale)
     LIMIT 1
     """
 )
@@ -70,6 +77,10 @@ async def lookup_asn(
     num: int,
     request: Request,
     include_rpsl: bool = Query(default=True),
+    include_stale: bool = Query(
+        default=False,
+        description="Include records marked as stale by GC (default: hide).",
+    ),
 ) -> AsnLookupResponse:
     if num < 0 or num > _ASN_MAX:
         raise HTTPException(
@@ -79,7 +90,7 @@ async def lookup_asn(
 
     sessionmaker = request.app.state.sessionmaker
     async with sessionmaker() as session:
-        result = await session.execute(_ASN_SQL, {"asn": num})
+        result = await session.execute(_ASN_SQL, {"asn": num, "include_stale": include_stale})
         row = result.mappings().first()
 
         if row is None:
@@ -87,18 +98,19 @@ async def lookup_asn(
 
         rpsl_block: AsnRpslBlock | None = None
         if include_rpsl:
-            rpsl_block = await _fetch_asn_rpsl(session, num)
+            rpsl_block = await _fetch_asn_rpsl(session, num, include_stale=include_stale)
 
     return AsnLookupResponse(asn=num, **dict(row), rpsl=rpsl_block)
 
 
-async def _fetch_asn_rpsl(session: AsyncSession, asn: int) -> AsnRpslBlock:
+async def _fetch_asn_rpsl(session: AsyncSession, asn: int, *, include_stale: bool) -> AsnRpslBlock:
     """``aut_num`` для ``asn`` + LEFT JOIN на ``organisation``.
 
     Возвращает ``AsnRpslBlock`` всегда. Cross-RIR org-handle ищется по
-    ``(rir, org_handle)``; orphan → ``organisation`` ``None``.
+    ``(rir, org_handle)``; orphan → ``organisation`` ``None``. Stale-фильтр
+    применяется к aut_num и к organisation.
     """
-    result = await session.execute(_AUT_NUM_RPSL_SQL, {"asn": asn})
+    result = await session.execute(_AUT_NUM_RPSL_SQL, {"asn": asn, "include_stale": include_stale})
     row = result.mappings().first()
     if row is None:
         return AsnRpslBlock()
@@ -116,6 +128,7 @@ async def _fetch_asn_rpsl(session: AsyncSession, asn: int) -> AsnRpslBlock:
         created=row["created"],
         last_modified=row["last_modified"],
         source=row["source"],
+        is_stale=row["is_stale"],
     )
 
     org_obj: RpslOrganisation | None = None
@@ -135,6 +148,7 @@ async def _fetch_asn_rpsl(session: AsyncSession, asn: int) -> AsnRpslBlock:
             created=row["o_created"],
             last_modified=row["o_last_modified"],
             source=row["o_source"],
+            is_stale=row["o_is_stale"],
         )
 
     return AsnRpslBlock(aut_num=aut_num_obj, organisation=org_obj)

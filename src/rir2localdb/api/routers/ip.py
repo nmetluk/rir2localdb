@@ -10,6 +10,12 @@ Stage 2: подмешивается блок ``rpsl`` с самым узким `
 Cross-RIR ссылки на org допустимы — если org-handle не найден,
 ``rpsl.organisation`` будет ``null``. См. ADR-0007.
 
+Stage 3-03: stale-records скрываются по умолчанию. ``?include_stale=
+true`` показывает в т.ч. помеченные ``is_stale=TRUE`` GC'ом. Каждый
+объект ответа содержит ``is_stale`` поле; клиент видит флаг даже
+когда запрашивал без include_stale (в этом случае все возвращённые
+записи — active, ``is_stale=false``).
+
 Query-параметр ``?include_rpsl=false`` отключает обогащение целиком
 (``rpsl: null``) для bandwidth-sensitive клиентов.
 """
@@ -34,12 +40,18 @@ from rir2localdb.api.schemas import (
 router = APIRouter()
 
 
+# ``(is_stale = FALSE OR :include_stale)`` — при ``include_stale=true``
+# фильтр пропадает (любая строка проходит), planner использует full
+# GiST индекс. При ``include_stale=false`` — partial GiST индекс
+# ``..._active_gist WHERE is_stale = FALSE`` (см. migration 0005).
+
 _IPV4_SQL = text(
     """
     SELECT rir, family, cc, host(start_text) AS start, value, prefix_length,
-           status, allocated_on, opaque_id, first_seen_run, last_seen_run
+           status, allocated_on, opaque_id, first_seen_run, last_seen_run, is_stale
     FROM ip_allocation
     WHERE family = 4 AND range_v4 @> CAST(:ip AS int8)
+      AND (is_stale = FALSE OR :include_stale)
     ORDER BY upper(range_v4) - lower(range_v4) ASC
     LIMIT 1
     """
@@ -48,9 +60,10 @@ _IPV4_SQL = text(
 _IPV6_SQL = text(
     """
     SELECT rir, family, cc, host(start_text) AS start, value, prefix_length,
-           status, allocated_on, opaque_id, first_seen_run, last_seen_run
+           status, allocated_on, opaque_id, first_seen_run, last_seen_run, is_stale
     FROM ip_allocation
     WHERE family = 6 AND range_v6 @> CAST(:ip AS numeric)
+      AND (is_stale = FALSE OR :include_stale)
     ORDER BY upper(range_v6) - lower(range_v6) ASC
     LIMIT 1
     """
@@ -66,7 +79,7 @@ _INETNUM_RPSL_SQL = text(
     SELECT
         i.rir, host(i.start_text) AS start, i.value, i.netname, i.country,
         i.descr, i.org, i.admin_c, i.tech_c, i.status, i.mnt_by,
-        i.created, i.last_modified, i.source,
+        i.created, i.last_modified, i.source, i.is_stale,
         o.rir            AS o_rir,
         o.org_handle     AS o_org_handle,
         o.org_name       AS o_org_name,
@@ -80,11 +93,14 @@ _INETNUM_RPSL_SQL = text(
         o.mnt_by         AS o_mnt_by,
         o.created        AS o_created,
         o.last_modified  AS o_last_modified,
-        o.source         AS o_source
+        o.source         AS o_source,
+        o.is_stale       AS o_is_stale
     FROM inetnum i
     LEFT JOIN organisation o
         ON o.rir = i.rir AND o.org_handle = i.org
+        AND (o.is_stale = FALSE OR :include_stale)
     WHERE i.range_v4 @> CAST(:ip AS int8)
+      AND (i.is_stale = FALSE OR :include_stale)
     ORDER BY upper(i.range_v4) - lower(i.range_v4) ASC
     LIMIT 1
     """
@@ -95,7 +111,7 @@ _INET6NUM_RPSL_SQL = text(
     SELECT
         i.rir, host(i.start_text) AS start, i.value, i.netname, i.country,
         i.descr, i.org, i.admin_c, i.tech_c, i.status, i.mnt_by,
-        i.created, i.last_modified, i.source,
+        i.created, i.last_modified, i.source, i.is_stale,
         o.rir            AS o_rir,
         o.org_handle     AS o_org_handle,
         o.org_name       AS o_org_name,
@@ -109,11 +125,14 @@ _INET6NUM_RPSL_SQL = text(
         o.mnt_by         AS o_mnt_by,
         o.created        AS o_created,
         o.last_modified  AS o_last_modified,
-        o.source         AS o_source
+        o.source         AS o_source,
+        o.is_stale       AS o_is_stale
     FROM inet6num i
     LEFT JOIN organisation o
         ON o.rir = i.rir AND o.org_handle = i.org
+        AND (o.is_stale = FALSE OR :include_stale)
     WHERE i.range_v6 @> CAST(:ip AS numeric)
+      AND (i.is_stale = FALSE OR :include_stale)
     ORDER BY upper(i.range_v6) - lower(i.range_v6) ASC
     LIMIT 1
     """
@@ -125,6 +144,10 @@ async def lookup_ip(
     addr: str,
     request: Request,
     include_rpsl: bool = Query(default=True),
+    include_stale: bool = Query(
+        default=False,
+        description="Include records marked as stale by GC (default: hide).",
+    ),
 ) -> IpLookupResponse:
     try:
         ip = ip_address(addr)
@@ -134,12 +157,16 @@ async def lookup_ip(
     sessionmaker = request.app.state.sessionmaker
     async with sessionmaker() as session:
         if isinstance(ip, IPv4Address):
-            result = await session.execute(_IPV4_SQL, {"ip": int(ip)})
+            result = await session.execute(
+                _IPV4_SQL, {"ip": int(ip), "include_stale": include_stale}
+            )
         else:
             assert isinstance(ip, IPv6Address)
             # 128-битное значение в int не лезет в PostgreSQL bigint —
             # отправляем как numeric через Decimal.
-            result = await session.execute(_IPV6_SQL, {"ip": Decimal(int(ip))})
+            result = await session.execute(
+                _IPV6_SQL, {"ip": Decimal(int(ip)), "include_stale": include_stale}
+            )
         row = result.mappings().first()
 
         if row is None:
@@ -147,22 +174,29 @@ async def lookup_ip(
 
         rpsl_block: IpRpslBlock | None = None
         if include_rpsl:
-            rpsl_block = await _fetch_ip_rpsl(session, ip)
+            rpsl_block = await _fetch_ip_rpsl(session, ip, include_stale=include_stale)
 
     return IpLookupResponse(address=str(ip), **dict(row), rpsl=rpsl_block)
 
 
-async def _fetch_ip_rpsl(session: AsyncSession, ip: IPv4Address | IPv6Address) -> IpRpslBlock:
+async def _fetch_ip_rpsl(
+    session: AsyncSession, ip: IPv4Address | IPv6Address, *, include_stale: bool
+) -> IpRpslBlock:
     """Самый узкий inetnum/inet6num, охватывающий ``ip``, + LEFT JOIN organisation.
 
     Возвращает ``IpRpslBlock`` всегда (даже когда оба поля ``None``).
     Cross-RIR org-handle: соответствие ищется по ``(rir, org_handle)``;
     если в дампах висит «осиротевшая» ссылка — ``organisation`` ``None``.
+
+    Stale-фильтр применяется и к inetnum/inet6num, и к организации.
     """
+    params: dict[str, object] = {"include_stale": include_stale}
     if isinstance(ip, IPv4Address):
-        result = await session.execute(_INETNUM_RPSL_SQL, {"ip": int(ip)})
+        params["ip"] = int(ip)
+        result = await session.execute(_INETNUM_RPSL_SQL, params)
     else:
-        result = await session.execute(_INET6NUM_RPSL_SQL, {"ip": Decimal(int(ip))})
+        params["ip"] = Decimal(int(ip))
+        result = await session.execute(_INET6NUM_RPSL_SQL, params)
     row = result.mappings().first()
     if row is None:
         return IpRpslBlock()
@@ -184,6 +218,7 @@ async def _fetch_ip_rpsl(session: AsyncSession, ip: IPv4Address | IPv6Address) -
         created=row["created"],
         last_modified=row["last_modified"],
         source=row["source"],
+        is_stale=row["is_stale"],
     )
 
     org_obj: RpslOrganisation | None = None
@@ -203,6 +238,7 @@ async def _fetch_ip_rpsl(session: AsyncSession, ip: IPv4Address | IPv6Address) -
             created=row["o_created"],
             last_modified=row["o_last_modified"],
             source=row["o_source"],
+            is_stale=row["o_is_stale"],
         )
 
     return IpRpslBlock(inetnum=inetnum_obj, organisation=org_obj)

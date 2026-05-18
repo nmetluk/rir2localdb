@@ -44,6 +44,9 @@ class RpslInetnum(BaseModel):
     created: datetime | None = None
     last_modified: datetime | None = None
     source: str | None = None
+    is_stale: bool = False
+    """``True`` если GC пометил запись как не появлявшуюся в последних
+    N успешных sync'ах (см. ADR-0008, Stage 3-03)."""
 
 
 class RpslInet6num(BaseModel):
@@ -64,6 +67,7 @@ class RpslInet6num(BaseModel):
     created: datetime | None = None
     last_modified: datetime | None = None
     source: str | None = None
+    is_stale: bool = False
 
 
 class RpslAutNum(BaseModel):
@@ -81,6 +85,7 @@ class RpslAutNum(BaseModel):
     created: datetime | None = None
     last_modified: datetime | None = None
     source: str | None = None
+    is_stale: bool = False
 
 
 class RpslOrganisation(BaseModel):
@@ -104,6 +109,7 @@ class RpslOrganisation(BaseModel):
     created: datetime | None = None
     last_modified: datetime | None = None
     source: str | None = None
+    is_stale: bool = False
 
 
 class IpRpslBlock(BaseModel):
@@ -144,6 +150,10 @@ class IpLookupResponse(BaseModel):
     opaque_id: str | None
     first_seen_run: int
     last_seen_run: int
+    is_stale: bool = False
+    """``True`` если GC пометил allocation как stale (см. ADR-0008).
+    Записи с ``is_stale=True`` скрываются по умолчанию; opt-in через
+    ``?include_stale=true``."""
     rpsl: IpRpslBlock | None = None
     """``None`` если ``?include_rpsl=false``. Иначе — блок (с возможно
     ``None``-полями, если RPSL-данных нет)."""
@@ -162,6 +172,7 @@ class AsnLookupResponse(BaseModel):
     opaque_id: str | None
     first_seen_run: int
     last_seen_run: int
+    is_stale: bool = False
     rpsl: AsnRpslBlock | None = None
     """``None`` если ``?include_rpsl=false``. Иначе — блок (с возможно
     ``None``-полями, если RPSL-данных нет)."""
