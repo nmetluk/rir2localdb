@@ -25,7 +25,7 @@
 - [x] Спецификации, ADR, скелет репозитория, каталог источников
   `src/rir2localdb/sources.py`, документация (`docs/`, 10 файлов + 5 ADR).
 
-**Stage 1: Core sync + minimal API — в работе. Шаги 1–6 закрыты.**
+**Stage 1: Core sync + minimal API — в работе. Шаги 1–7 закрыты.**
 
 Сделано в текущей сессии (2026-05-17):
 
@@ -84,6 +84,23 @@
   `"00000000"` → `None`. 17 тестов: 5 параметризованных RIR-фрагментов
   + 12 edge cases. Детали:
   `.claude/session-log/01-05-parsers-delegated.md`.
+- [x] **Шаг 7 — `sync/orchestrator.py` + CLI** (двухходовой):
+  - 7a (skeleton, `dd49def`+`6ebab2a`+`874a815`+`8eb418a`):
+    `SyncRunSummary` + `run_sync` контракт, 4 typer-команды
+    (sync/status/migrate/gc), `logging_setup.configure_logging`,
+    `ADVISORY_LOCK_KEY = 0x7269723263616C64`. Q1-Q5 согласованы.
+    Детали: `01-07a-orchestrator-skeleton.md`.
+  - 7b (impl, `7f8df23`..`0774176`): `run_sync` целиком —
+    SQLAlchemy session для управляющих операций (INSERT sync_run /
+    advisory lock / UPDATE), raw asyncpg для ETL hot-path. Per-source
+    isolation через `session.begin_nested()` savepoint'ы. CLI
+    команды реализованы (alembic.config программно, без alembic.ini).
+    5 unit-сценариев через `clean_db` фикстуру (TRUNCATE + asyncpg).
+    Integration smoke против ftp.ripe.net (опциональный `pytest -m
+    integration`). По дороге: bug fix md5 BSD-формата для RIPE
+    (regex `\b[0-9a-fA-F]{32}\b`); bug fix tx-binding (raw asyncpg
+    autocommit, если SQLAlchemy ещё не отправил BEGIN). Детали:
+    `01-07b-orchestrator-impl.md`.
 - [x] **Шаг 6 — `etl/delegated_etl.py`** (двухходовой: skeleton + impl):
   - 6a (skeleton, `2a058db`): типы, контракты, helper-сигнатуры с
     `raise NotImplementedError`; Q1–Q5 согласованы (raw
@@ -122,43 +139,36 @@
 
 Не сделано (ждёт следующих шагов Stage 1):
 
-- [ ] `sync/orchestrator.py` + CLI-команды `sync` / `status` /
-  `migrate` / `gc` (шаг 7); там же — integration smoke против
-  `ftp.ripe.net` в `tests/integration/`.
-- [ ] FastAPI `/v1/ip` / `/v1/asn` / `/v1/status` / `/v1/healthz` (шаг 8).
-- [ ] CI.
+- [ ] FastAPI `/v1/ip` / `/v1/asn` / `/v1/status` / `/v1/healthz` (шаг 8) —
+  последний шаг stage 1.
+- [ ] CI workflow (после шага 8).
 
 ---
 
 ## Что делать дальше (Stage 1)
 
 Подробный список — `docs/08-roadmap.md` раздел «Stage 1». Кратко
-(шаги 1–6 закрыты; актуальный ближайший — №7):
+(шаги 1–7 закрыты; актуальный ближайший — №8, финал stage 1):
 
 1. ~~`alembic init` + миграция `0001_initial`.~~ ✅
 2. ~~Таблицы `sync_run`, `sync_file`, `ip_allocation`, `asn_allocation`.~~ ✅
-3. ~~`sync/fetcher.py` — реализация + 9 тестов через MockTransport.~~ ✅
+3. ~~`sync/fetcher.py` — реализация + 10 тестов через MockTransport.~~ ✅
 4. ~~`sync/state.py` — CRUD над `sync_file`, 10 тестов.~~ ✅
 5. ~~`parsers/delegated.py` — NRO pipe-format iterator, 17 тестов.~~ ✅
 6. ~~`etl/delegated_etl.py` — staging COPY + ON CONFLICT UPSERT, 13 тестов.~~ ✅
-7. **`sync/orchestrator.py` + CLI**:
-   - `run_sync(tiers, settings) -> SyncRunSummary`:
-     - открыть `sync_run` (status='running'),
-     - `make_http_client(settings)` + asyncpg connection,
-     - для каждого `Source` из `sources_for_tiers(tiers)`:
-       - `read_previous_state(session, source.url)`,
-       - `fetch(client, source, previous, settings)`,
-       - `write_result(session, source, result, run_id)`,
-       - если `NEW`/`UPDATED`: `parse_delegated(result.local_path)` →
-         `apply_delegated_etl(conn, records, run_id)` →
-         `mark_parsed(session, url, now())`.
-     - закрыть `sync_run` (status='success'/'failed', stats=JSONB).
-   - CLI (Typer): `rir2localdb sync --tier core`, `status`,
-     `migrate up|down`, `gc --keep N`.
-   - Integration smoke против `ftp.ripe.net` в `tests/integration/`
-     с pytest-маркером `integration`.
-8. Минимальный FastAPI: `GET /v1/ip/{addr}`, `GET /v1/asn/{num}`,
-   `GET /v1/status`, `GET /v1/healthz`.
+7. ~~`sync/orchestrator.py` + CLI — full orchestration, 5 unit-тестов +
+   live RIPE smoke.~~ ✅
+8. **FastAPI** — последний шаг stage 1:
+   - `api/app.py` — FastAPI с lifespan, `AsyncEngine`-фабрика.
+   - Роутеры: `GET /v1/ip/{addr}`, `GET /v1/asn/{num}`,
+     `GET /v1/status`, `GET /v1/healthz`.
+   - Lookup через сырой SQL: `range_v4 @> $1::int8` / `range_v6 @>
+     ...::numeric`, `ORDER BY upper-lower ASC LIMIT 1` для самого
+     специфичного.
+   - `tests/test_api_smoke.py` через `httpx.AsyncClient(transport=ASGITransport(app))`,
+     с pre-populated данными через `clean_db`-like фикстуру.
+   - **DoD stage 1:** `curl /v1/ip/8.8.8.8` отвечает корректным JSON
+     после `rir2localdb sync --tier core`.
 
 **Definition of Done для Stage 1:** на чистой машине проходит сценарий
 быстрого старта из `README.md`, `curl http://localhost:8000/v1/ip/8.8.8.8`
@@ -197,6 +207,17 @@
    `prefix_length` — это удобно для API и человеко-читаемого вывода.
    Решение по Stage 2: вычислять в ETL (cheaper) или в API on-the-fly
    (proще). Сейчас не нужно — задача ETL, не миграции.
+5. **Wheel-packaging миграций.** `cli._alembic_config` резолвит
+   `script_location` через `Path(__file__).parents[2] / "migrations"` —
+   работает для `pip install -e .`, но при wheel-сборке `migrations/`
+   будет вне пакета. Stage 3 ops — переключить на
+   `importlib.resources.files("rir2localdb").joinpath("migrations")`
+   и включить `migrations/` в пакет через hatch build-config.
+6. **`data_dir` validation.** `run_sync` создаёт `settings.data_dir`
+   через `mkdir(parents=True, exist_ok=True)` — опечатка в `.env`
+   создаст каталог в неожиданном месте. Stage 3 ops может добавить
+   sanity-check (абсолютный путь, права на запись, не корневая
+   система).
 
 ---
 
@@ -220,12 +241,16 @@ rir2localdb/
 │   ├── parsers/rpsl.py                 ← TODO-стаб (Stage 2)
 │   ├── etl/delegated_etl.py            ← реализован (шаг 6)
 │   ├── etl/rpsl_etl.py                 ← TODO-стаб (Stage 2)
-│   ├── api/                            ← TODO-стабы, наполняются в Stage 1
+│   ├── sync/orchestrator.py            ← реализован (шаг 7)
+│   ├── cli.py                          ← реализован (шаг 7)
+│   ├── logging_setup.py                ← реализован (шаг 7, plain text)
+│   ├── api/                            ← TODO-стабы, шаг 8
 ├── alembic.ini                         ← конфиг Alembic (URL берётся из env)
 ├── migrations/                         ← Alembic, async-template
 │   ├── env.py                          ← интегрирован с config.Settings
 │   └── versions/0001_initial_schema.py ← миграция Stage 1
-├── tests/                              ← fetcher + state + delegated_parser + delegated_etl + conftest
+├── tests/                              ← fetcher + state + parser + etl + orchestrator + conftest
+├── tests/integration/                  ← live RIPE smoke (skip by default)
 ├── .claude/WORKFLOW.md                 ← методология (см. ADR-0006)
 ├── .claude/session-log/                ← по одному файлу на шаг Stage N
 ├── .github/workflows/                  ← notify-session-log.yml (Telegram)
