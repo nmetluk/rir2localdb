@@ -81,26 +81,36 @@ DoD: на чистой машине шаги quick-start из `README.md` про
 ## Stage 2 · Rich whois (RPSL dumps)
 
 **Цель:** для адресов RIPE/APNIC/AFRINIC возвращать богатые данные
-(netname, org, mnt-by, abuse-c).
+(netname, org, mnt-by, abuse-c). По итогам ADR-0007 — одна таблица на
+тип объекта с `rir` discriminator (вместо per-(rir,type)).
 
 Деливередлы:
-- [ ] Миграция `0002_rpsl_tables`: `ripe_inetnum`, `ripe_inet6num`,
-  `ripe_aut_num`, `ripe_organisation`, `ripe_route`, `ripe_route6`,
-  `ripe_as_block` и аналогичные для APNIC/AFRINIC.
-- [ ] `parsers/rpsl.py` — потоковый парсер RPSL.
-- [ ] `etl/rpsl_etl.py` — диспатчер по типу объекта, для каждого
-  типа свой загрузчик.
-- [ ] Расширение API: поле `rpsl` в ответах `/ip` и `/asn`.
-- [ ] Опциональный коннектор ARIN Bulk Whois:
-  - `RIR2LOCALDB_ARIN_BULK_KEY` env;
-  - `arin-bulk` tier;
-  - парсер ARIN XML;
-  - таблицы `arin_*`.
-- [ ] Опциональный LACNIC RDAP-fallback при запросе IP в зоне LACNIC.
-- [ ] Тесты на RPSL парсер, включая edge-cases из `docs/05-parsers.md`.
+- [x] Миграция `0002_rpsl_tables`: 8 таблиц с `rir`-discriminator —
+  `inetnum`, `inet6num`, `aut_num`, `organisation`, `route`, `route6`,
+  `as_block`, `role`. ADR-0007.
+- [x] `parsers/rpsl.py` — потоковый парсер RPSL (RFC 2622, gzip
+  auto-detect, lowercase keys, continuation join, errors='replace').
+- [x] `etl/rpsl_etl.py` — диспатчер по первому ключу объекта, 8
+  мапперов, batched COPY → staging + UPSERT, JSONB binary codec
+  (version-байт `\x01`), streaming streaming-friendly.
+- [x] Расширение API: поле `rpsl` в ответах `/v1/ip` и `/v1/asn`,
+  LEFT JOIN organisation по `(rir, org_handle)`, query-параметр
+  `?include_rpsl=false` для opt-out.
+- [x] Подключение rich-tier к orchestrator: format-based dispatch
+  (DELEGATED → delegated_etl, RPSL* → rpsl_etl). `SyncRunSummary`
+  расширен RPSL-counters. CLI `status` показывает «RPSL records»
+  столбец. `sources_for_tiers({RICH})` авто-тянет `ARIN_RR`.
+- [x] ARIN IRR подключен как `Format.RPSL_GZ` + `Tier.ARIN_RR`,
+  использует тот же RPSL парсер + ETL.
+- [ ] RDAP fallback для ARIN-ownership (Stage 2-06, опционально).
+- [ ] Опциональный коннектор ARIN Bulk Whois (требует API-ключ;
+  отложено в Stage 3 ops).
 
-DoD: `curl /v1/ip/193.0.6.139` возвращает `rpsl.inetnum.netname`
-и `rpsl.organisation.org_name`.
+**Stage 2 закрыт 2026-05-18** (`.claude/session-log/02-99-stage-2-closed.md`):
+- 125 unit-тестов (включая 17 RPSL parser, 17 RPSL ETL, 8 RPSL API,
+  3 rich-tier orchestrator).
+- DoD: `curl /v1/ip/193.0.6.139` возвращает `rpsl.inetnum.netname` и
+  `rpsl.organisation.org_name` (после `sync --tier core,rich`).
 
 ---
 

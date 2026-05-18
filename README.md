@@ -33,8 +33,11 @@ cp .env.example .env
 # 4. Накатить миграции
 rir2localdb migrate
 
-# 5. Первичная синхронизация (5 RIR'ов, ~100 секунд, ~750k записей)
+# 5. Первичная синхронизация. Core tier (~100 секунд, ~750k записей):
 rir2localdb sync --tier core
+# Опционально rich-tier (RPSL дампы + ARIN IRR; ~10-20 минут, ~5M
+# объектов inetnum/aut-num/route/...):
+rir2localdb sync --tier core --tier rich
 
 # 6. Посмотреть статус
 rir2localdb status

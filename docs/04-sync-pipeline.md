@@ -101,6 +101,33 @@ RIR режет HTTPS быстрее, чем FTP. Спойлер: не режет
 - Если на Stage 3 нужно ускорить — параллелим разные RIR-ы,
   потому что они независимы и пишут в разные таблицы.
 
+## Orchestrator: format-based ETL dispatch
+
+`sync/orchestrator.py` после `fetch` / `write_result` смотрит
+`source.format` и роутит на нужный ETL:
+
+- `Format.DELEGATED` → `parse_delegated` + `apply_delegated_etl(raw_conn,
+  records, run_id)`.
+- `Format.RPSL` / `Format.RPSL_GZ` / `Format.RPSL_SPLIT_GZ` →
+  `parse_rpsl` (стрим) + `apply_rpsl_etl(raw_conn, objects, rir=
+  source.rir.value, run_id=run_id)`.
+- Любой другой формат → warning + skip (defense-in-depth; не
+  встречается в каталоге).
+
+Один `run_sync` может смешивать delegated- и RPSL-источники в одной
+транзакции (общий `raw_conn` через `get_raw_connection`). Падение
+любого ETL откатывает весь run (savepoint per-source оставляет outer
+транзакцию живой при per-source ошибках, но critical ETL failure не
+изолируется savepoint'ом из-за TEMP-таблиц с `ON COMMIT DROP`).
+
+### `sources_for_tiers` auto-expansion
+
+`Tier.RICH` в запросе автоматически тянет `Tier.ARIN_RR`, потому что
+ARIN не публикует полный RPSL — только IRR-дамп. Это product-level
+группировка: `--tier rich` означает «whois-rich + ARIN IRR».
+Tier `arin-rr` без `rich` остаётся доступным для специфичных случаев
+(обновить routing-данные без перезагрузки 5M-строчных RPSL).
+
 ## ETL-слой
 
 Между парсером и БД сидит `etl/`. Два модуля:
