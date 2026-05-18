@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import gzip
 import logging
-import os
 from pathlib import Path
 
 import pytest
@@ -206,9 +205,7 @@ def test_tail_object_without_trailing_newline(tmp_path: Path) -> None:
 
 
 def test_gzip_auto_detected_by_magic_bytes(tmp_path: Path) -> None:
-    content = (
-        "inetnum: 193.0.0.0 - 193.0.0.255\nnetname: RIPE-NCC\nsource: RIPE\n"
-    )
+    content = "inetnum: 193.0.0.0 - 193.0.0.255\nnetname: RIPE-NCC\nsource: RIPE\n"
     p = tmp_path / "rpsl.gz"
     p.write_bytes(gzip.compress(content.encode("utf-8")))
     objs = list(parse_rpsl(p))

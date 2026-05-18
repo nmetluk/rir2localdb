@@ -161,9 +161,7 @@ def _open_maybe_gzip(path: Path) -> IO[str]:
     return open(path, encoding="utf-8", errors="replace")
 
 
-def _parse_rpsl_internal(
-    path: Path, stats: RpslParseStats | None
-) -> Iterator[RpslObject]:
+def _parse_rpsl_internal(path: Path, stats: RpslParseStats | None) -> Iterator[RpslObject]:
     """Общая реализация для ``parse_rpsl`` и ``parse_rpsl_with_stats``.
 
     Если ``stats`` передан — обновляется по ходу итерации. Иначе
@@ -220,9 +218,7 @@ def _parse_rpsl_internal(
 
             # 4. Regular `key: value` line.
             if ":" not in line:
-                logger.warning(
-                    "rpsl: malformed line (no ':'), skipping: %r", line[:120]
-                )
+                logger.warning("rpsl: malformed line (no ':'), skipping: %r", line[:120])
                 continue
 
             key, _, value = line.partition(":")
