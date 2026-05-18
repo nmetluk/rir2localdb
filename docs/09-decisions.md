@@ -20,6 +20,9 @@ Records) в `docs/adr/`. Формат — лёгкий: контекст, реш
 - [`adr/0006-cooperative-claude-workflow.md`](adr/0006-cooperative-claude-workflow.md) —
   планирующий Claude в чате + исполняющий Claude Code,
   обмен через публичный git и Telegram-уведомления.
+- [`adr/0007-rpsl-table-layout.md`](adr/0007-rpsl-table-layout.md) —
+  одна таблица на тип RPSL-объекта (``inetnum``, ``aut_num``, ...) с
+  колонкой ``rir`` как discriminator. Партиционирование отложено.
 
 ## Когда писать новый ADR
 
