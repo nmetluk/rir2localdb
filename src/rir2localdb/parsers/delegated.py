@@ -15,7 +15,8 @@
 
     - пустые строки;
     - комментарии (`#...`);
-    - version-header (длина 7 полей, ``parts[0].isdigit()``);
+    - version-header (длина 7 полей, ``parts[0]`` — версия формата:
+      ``"2"`` или ``"2.3"``, distinguished от записи через regex);
     - summary lines (``parts[3] == "*"``);
     - IANA-записи (``parts[0] == "iana"``) — решение из ``docs/05``,
       их в ``ip_allocation`` не пишем;
@@ -33,15 +34,20 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Literal
+from typing import Final, Literal
 
 logger = logging.getLogger(__name__)
 
 _KNOWN_TYPES = frozenset({"asn", "ipv4", "ipv6"})
+
+# Version line: `parts[0]` это «версия формата» — целое или dotted
+# (например ``"2"`` старый формат, ``"2.3"`` современный APNIC/ARIN/LACNIC).
+_VERSION_TOKEN_RE: Final[re.Pattern[str]] = re.compile(r"^\d+(\.\d+)*$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,8 +106,8 @@ def parse_delegated(path: Path) -> Iterator[DelegatedRecord]:
                 continue
             if parts[0] == "iana":
                 continue
-            if len(parts) == 7 and parts[0].isdigit():
-                continue  # version header
+            if len(parts) == 7 and _VERSION_TOKEN_RE.match(parts[0]):
+                continue  # version header (поддерживает "2" и "2.3")
             if parts[3] == "*":
                 continue  # summary line
 

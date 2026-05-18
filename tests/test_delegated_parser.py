@@ -213,6 +213,18 @@ def test_skips_version_header(tmp_path: Path) -> None:
     assert records == []
 
 
+def test_skips_version_header_dotted(tmp_path: Path) -> None:
+    # APNIC / ARIN / LACNIC начиная с ~2024 используют "2.3" в version-line.
+    # `isdigit()` для "2.3" false — нужен regex `^\d+(\.\d+)*$`.
+    content = (
+        "2.3|apnic|20260518|184596||20260515|+1000\n"
+        "apnic|JP|asn|2497|1|19960207|allocated|A91|e-stats\n"
+    )
+    records = list(parse_delegated(_write(tmp_path, content)))
+    assert len(records) == 1
+    assert records[0].registry == "apnic"
+
+
 def test_skips_iana_records(tmp_path: Path) -> None:
     content = """\
 2|apnic|20260517|110000|19830101|20260516|+1000
