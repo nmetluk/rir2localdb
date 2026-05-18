@@ -27,19 +27,42 @@
 
 **Stage 1: Core sync + minimal API — ЗАКРЫТ ✅ (2026-05-18).**
 **Stage 1.50: Стабилизация — ЗАКРЫТА ✅ (2026-05-18).**
-**Stage 2 в работе. Шаги 2-01..2-04 закрыты.**
+**Stage 2 ЗАКРЫТ ✅ (2026-05-18).**
+**Stage 1: Core sync + minimal API — ЗАКРЫТ ✅ (2026-05-18).**
+**Stage 1.50: Стабилизация — ЗАКРЫТА ✅ (2026-05-18).**
 
-Stage 2 разбит на 6 шагов:
+Stage 2 (6 шагов):
 - 2-01 ✅ RPSL parser (`parsers/rpsl.py`, 18 тестов).
 - 2-02 ✅ миграция `0002_rpsl_tables` (8 таблиц, ADR-0007).
 - 2-03 ✅ RPSL ETL (`etl/rpsl_etl.py`, 17 тестов; batched COPY +
   per-table staging + JSONB binary codec).
 - 2-04 ✅ API RPSL enrichment (`rpsl` блок в `/v1/ip` и `/v1/asn`,
-  8 новых тестов; `?include_rpsl=false` опциональное отключение;
-  LEFT JOIN organisation по `(rir, org_handle)`).
-- 2-05 ⏳ ARIN IRR tier — следующий (включает rich-tier coverage
-  в `sources_for_tiers` оркестратора).
-- 2-06 ⏳ RDAP fallback (опционально).
+  8 тестов; `?include_rpsl=false`; LEFT JOIN organisation).
+- 2-05 ✅ orchestrator rich-tier coverage (format-based dispatch
+  DELEGATED↔RPSL, `sources_for_tiers({RICH})` авто-тянет ARIN_RR,
+  CLI status показывает RPSL records, 4 теста). **Live DoD ✅**:
+  9.6M RPSL records загружено за 24 минуты; `curl /v1/ip/193.0.6.139`
+  возвращает `rpsl.inetnum.netname="RIPE-NCC"` и
+  `rpsl.organisation.org_name="Reseaux IP Europeens Network Coordination Centre (RIPE NCC)"`.
+- 2-06 ⏳ RDAP fallback — опционально, отложено в Stage 3+.
+
+Подробный итог — `.claude/session-log/02-99-stage-2-closed.md`.
+
+**Цифры:** 33 модуля в `src/rir2localdb/`, 125 unit-тестов + 1
+integration smoke, 7 ADR, ~70 коммитов после bootstrap.
+
+Live full sync (core+rich) на сервере: **646k IP allocation + 113k
+ASN + 9.65M RPSL objects** (5.5M inetnum, 1.5M route, 1.1M inet6num,
+791k route6, 185k role, 118k organisation, 72k aut_num, 1.7k as_block);
+**duration ~24 минуты**.
+
+**Открытые follow-ups (см. 02-99):**
+- ARIN IRR zero-padded prefix (92 skipped, нерешённый): regex
+  pre-normalize в `_to_route_rows`. Stage 3.
+- `rir` divergence: `ip_allocation.rir="ripencc"` vs
+  `inetnum.rir="ripe"`. Нормализация в Stage 3.
+- Stage 2-06 RDAP fallback (опционально, для ARIN ownership).
+- Stale-records GC (см. ADR-0001), Stage 3 ops.
 
 После Stage 1 прошёл короткий блок «стабилизация перед Stage 2»
 (6 задач, `01-50-stabilization.md`):
