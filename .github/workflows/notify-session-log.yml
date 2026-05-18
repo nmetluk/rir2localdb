@@ -54,7 +54,13 @@ jobs:
             printf '<a href="%s"><code>%s</code></a> → <a href="%s"><code>%s</code></a>\n\n' \
               "$commit_url" "$sha_short" "$file_url" "$file"
             printf '<pre>'
-            head -c 3500 "$file" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
+            # head -c режет байты — для UTF-8 контента (русский / эмодзи)
+            # это рвёт multi-byte char на границе → Telegram отвечает
+            # HTTP 400 «can't decode». iconv -c -f utf-8 -t utf-8
+            # silently сбрасывает обрезанный хвост char'а.
+            head -c 3500 "$file" \
+              | iconv -c -f utf-8 -t utf-8 \
+              | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
             if [ "$(wc -c < "$file")" -gt 3500 ]; then
               printf '\n\n…(truncated, full file: %s)' "$file_url"
             fi
