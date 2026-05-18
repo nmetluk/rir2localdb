@@ -62,6 +62,7 @@ from rir2localdb.parsers.delegated import parse_delegated
 from rir2localdb.parsers.rpsl import parse_rpsl
 from rir2localdb.sources import Format, Source, Tier, sources_for_tiers
 from rir2localdb.sync.fetcher import FetchStatus, fetch, make_http_client
+from rir2localdb.sync.gc import GcStats, run_gc
 from rir2localdb.sync.state import mark_parsed, read_previous_state, write_result
 
 # Форматы, обрабатываемые RPSL парсером + ETL. Все три имеют один и
@@ -121,6 +122,17 @@ class SyncRunSummary:
     etl_rpsl_by_type: dict[str, dict[str, int]] = field(default_factory=dict)
     """``{"inetnum": {"inserted": N, "updated": M}, ...}``. Включает только
     таблицы, в которые был хоть один upsert в этом run'е."""
+    # GC (Stage 3-03). Заполняется только при ``status='success'`` —
+    # GC бежит после успешного sync'а в той же транзакции.
+    gc_threshold_run_id: int | None = None
+    """Id N-ого с конца successful sync_run'а, использованный как
+    threshold для is_stale. ``None`` если bootstrap (success-runs <
+    ``gc_grace_runs``) или sync завершился ``failed``."""
+    gc_marked_stale: dict[str, int] = field(default_factory=dict)
+    """Per-table count записей помеченных ``is_stale=TRUE`` этим run'ом."""
+    gc_cleared_stale: dict[str, int] = field(default_factory=dict)
+    """Per-table count записей у которых ``is_stale=TRUE`` → ``FALSE`` —
+    вернувшиеся в активные после того как sync снова их увидел."""
     error: str | None = None
     """``None`` при ``status='success'``; человеко-читаемое сообщение
     при ``'failed'`` (lock contention, БД недоступна, и т.п.).
@@ -244,6 +256,23 @@ async def run_sync(
                         status = "success"
                         final_error = None
 
+                    # GC бежит ТОЛЬКО на успешном sync'е и в этой же
+                    # транзакции — атомарно с UPDATE sync_run.status.
+                    # Сначала UPDATE до 'success' (чтобы текущий run
+                    # уже считался в success-окне threshold), потом GC,
+                    # потом final UPDATE с gc-счётчиками в stats.
+                    gc_stats = GcStats(
+                        grace_runs=settings.gc_grace_runs,
+                        threshold_run_id=None,
+                    )
+                    if status == "success":
+                        await session.execute(
+                            text("UPDATE sync_run SET status = 'success' WHERE id = :rid"),
+                            {"rid": run_id},
+                        )
+                        await session.flush()
+                        gc_stats = await run_gc(session, settings)
+
                     summary = _build_summary(
                         run_id=run_id,
                         tier_label=tier_label,
@@ -251,6 +280,7 @@ async def run_sync(
                         counters=counters,
                         error=final_error,
                         started=started,
+                        gc_stats=gc_stats,
                     )
                     await _finalize_sync_run(session, run_id, summary)
 
@@ -399,6 +429,7 @@ def _build_summary(
     counters: _Counters,
     error: str | None,
     started: float,
+    gc_stats: GcStats | None = None,
 ) -> SyncRunSummary:
     return SyncRunSummary(
         run_id=run_id,
@@ -418,6 +449,9 @@ def _build_summary(
         etl_rpsl_unknown_type_skipped=counters.etl_rpsl_unknown_type_skipped,
         etl_rpsl_malformed_skipped=counters.etl_rpsl_malformed_skipped,
         etl_rpsl_by_type=dict(counters.etl_rpsl_by_type),
+        gc_threshold_run_id=gc_stats.threshold_run_id if gc_stats else None,
+        gc_marked_stale=dict(gc_stats.marked_stale) if gc_stats else {},
+        gc_cleared_stale=dict(gc_stats.cleared_stale) if gc_stats else {},
         duration_ms=int((time.perf_counter() - started) * 1000),
         error=error,
     )
