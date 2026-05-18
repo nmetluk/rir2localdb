@@ -28,8 +28,6 @@
 **Stage 1: Core sync + minimal API — ЗАКРЫТ ✅ (2026-05-18).**
 **Stage 1.50: Стабилизация — ЗАКРЫТА ✅ (2026-05-18).**
 **Stage 2 ЗАКРЫТ ✅ (2026-05-18).**
-**Stage 1: Core sync + minimal API — ЗАКРЫТ ✅ (2026-05-18).**
-**Stage 1.50: Стабилизация — ЗАКРЫТА ✅ (2026-05-18).**
 
 Stage 2 (6 шагов):
 - 2-01 ✅ RPSL parser (`parsers/rpsl.py`, 18 тестов).
@@ -57,8 +55,10 @@ ASN + 9.65M RPSL objects** (5.5M inetnum, 1.5M route, 1.1M inet6num,
 **duration ~24 минуты**.
 
 **Открытые follow-ups (см. 02-99):**
-- ARIN IRR zero-padded prefix (92 skipped, нерешённый): regex
-  pre-normalize в `_to_route_rows`. Stage 3.
+- ~~ARIN IRR zero-padded prefix~~ — закрыт 2026-05-18 followup'ом
+  `02-followup-arin-zero-padded-prefix.md`; `_canonicalize_v4_prefix`
+  pre-normalize'ит `069.031.132.000/23` → `69.31.132.0/23` перед
+  IPv4Network. +92 route'а ARIN при следующем sync.
 - `rir` divergence: `ip_allocation.rir="ripencc"` vs
   `inetnum.rir="ripe"`. Нормализация в Stage 3.
 - Stage 2-06 RDAP fallback (опционально, для ARIN ownership).
