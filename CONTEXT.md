@@ -43,6 +43,12 @@
     на `python:3.12-slim`, один image / три CMD (serve/migrate/sync),
     non-root user, compose profile'ы для oneshot oneshot. Live smoke:
     full stack up + healthz/readyz зелёные. `03-04-docker.md`.
+  - **3-05** ✅ RDAP fallback для ARIN ownership (2026-05-18). On-demand
+    GET на `rdap.arin.net` + DB cache (24h TTL), transparent для
+    клиента. opt-in env. ADR-0009. Known limitation: APNIC catch-all
+    `IANA-NETBLOCK-*` блоки маскируют bulk-miss → RDAP не активируется
+    для большинства ARIN-IP; refine'м в follow-up при реальном спросе.
+    `03-05-rdap-fallback.md`.
   - 3-05 ⏳ RDAP fallback (опц.).
   - 3-06 ⏳ Grafana + alerts.
   - 3-07 ⏳ API mntner/person/as_set (опц.).
