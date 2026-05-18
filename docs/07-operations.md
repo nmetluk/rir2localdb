@@ -63,6 +63,108 @@ GC автоматически удаляет entries старее 7 дней. Re
 
 См. ADR-0009 для rationale + alternatives.
 
+## Observability deployment (Stage 3-06)
+
+Полный stack Prometheus + Grafana + Alertmanager как docker-compose
+addon. Все три из `deploy/`:
+
+```
+deploy/
+├── prometheus/
+│   ├── prometheus.yml      ← scrape config (api:8000 → /v1/metrics)
+│   └── alerts.yml          ← 4 группы alerts (sync / data / api / rdap)
+├── grafana/
+│   ├── datasources.yml     ← provisioning Prometheus datasource
+│   ├── dashboards.yml      ← provisioning dashboards path
+│   └── dashboard.json      ← основной dashboard (~18 панелей)
+└── alertmanager/
+    └── alertmanager.yml    ← Telegram bot routing example
+```
+
+### Quick start
+
+```bash
+# 1. Token для Alertmanager → Telegram (тот же бот, отдельный чат).
+sudo mkdir -p /etc/rir2localdb
+echo '123456:ABC...' | sudo tee /etc/rir2localdb/telegram_bot_token
+sudo chmod 600 /etc/rir2localdb/telegram_bot_token
+
+# 2. Подставить chat_id в alertmanager.yml (новый канал "rir2localdb alerts").
+sed -i 's/-1003983148345/<your-channel-chat-id>/' deploy/alertmanager/alertmanager.yml
+
+# 3. Поднять observability stack.
+docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+
+# 4. Smoke.
+curl -fsS http://localhost:9090/-/healthy           # Prometheus is Healthy.
+curl -fsS http://localhost:3000/api/health          # {"database":"ok"}
+curl -fsS http://localhost:9093/-/healthy           # Alertmanager OK
+# Открыть Grafana → http://localhost:3000 → Dashboard «rir2localdb».
+```
+
+Anonymous access в Grafana включён (Viewer role) — для production
+прода замените на login + read-only org. См. Grafana `auth.*` env.
+
+### Alert rules
+
+4 группы (см. `deploy/prometheus/alerts.yml`):
+
+| Group | Alerts | When fires |
+|---|---|---|
+| `rir2localdb_sync` | `SyncStale` (>36h), `SyncStaleCritical` (>72h), `SyncFailed`, `SyncDurationDegrading` (>30 min) | sync timer не отрабатывает или sync слишком долгий |
+| `rir2localdb_data` | `TableShrinking` (delta <-1000 rows/h), `SourceStale` (>48h) | данные потеряны или mirror down |
+| `rir2localdb_api` | `APIHighErrorRate` (>5% 5xx), `APISlowLookups` (p95 >1s) | API деградирует |
+| `rir2localdb_rdap` | `RDAPHighMissRate` (>1 req/s 15min) | RDAP cache не справляется / близко к rate-limit |
+
+Все пороги обоснованы baseline'ами Stage 3-01..05 (см. session-logs).
+Severity labels: `warning` для recoverable / observable issues,
+`critical` для broken pipeline.
+
+### Alertmanager → Telegram
+
+`deploy/alertmanager/alertmanager.yml` — пример конфига:
+
+- Один receiver `telegram-alerts` (бот тот же, чат отдельный).
+- `group_by: [alertname, severity]` — каждый alert один раз за окно.
+- `repeat_interval: 4h` (warning) / `1h` (critical) — повторные ping'и.
+- `inhibit_rules` — `SyncStaleCritical` подавляет `SyncStale`
+  (избегаем дублей при cascading failures).
+
+Production-замены:
+- `bot_token_file: /etc/alertmanager/telegram_bot_token` — mount'им
+  секрет файлом, не env-var'ом (Alertmanager поддерживает оба, файл
+  безопаснее).
+- `chat_id: -100...` — подставить реальный chat_id нового канала
+  «rir2localdb alerts» (отдельно от dev-канала «Claude push»).
+
+### PromQL cookbook
+
+Готовые запросы для типичных вопросов:
+
+```promql
+# Время с последнего успешного sync'а (в часах)
+(time() - rir2localdb_last_sync_run_finished_timestamp_seconds) / 3600
+
+# Текущий размер RPSL inetnum
+rir2localdb_table_rows{table="inetnum"}
+
+# Average lookup latency на /v1/ip/{addr}
+rate(rir2localdb_http_request_duration_seconds_sum{endpoint="/v1/ip/{addr}"}[5m])
+  /
+rate(rir2localdb_http_request_duration_seconds_count{endpoint="/v1/ip/{addr}"}[5m])
+
+# % запросов идущих через RDAP fallback (cache miss)
+sum(rate(rir2localdb_rdap_lookups_total{cached="false"}[5m]))
+  /
+sum(rate(rir2localdb_http_requests_total{endpoint=~"/v1/ip/.*|/v1/asn/.*"}[5m]))
+
+# Топ-5 endpoint'ов по error-rate
+topk(5, sum by (endpoint) (rate(rir2localdb_http_requests_total{status=~"5.."}[5m])))
+
+# Sources которые не обновлялись > 24h
+(time() - rir2localdb_source_last_fetched_timestamp_seconds) / 3600 > 24
+```
+
 ## Локальная разработка
 
 ```bash
