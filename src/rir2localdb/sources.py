@@ -20,7 +20,12 @@ class Rir(StrEnum):
     APNIC = "apnic"
     ARIN = "arin"
     LACNIC = "lacnic"
-    RIPE = "ripe"
+    RIPE = "ripencc"
+    """Value normalized to NRO canonical name (was ``"ripe"`` до Stage 2.50,
+    стало ``"ripencc"``). NRO delegated-extended использует ``ripencc`` для
+    RIPE NCC, и теперь все наши таблицы — delegated и RPSL — используют
+    одно значение. Stage 2.50 миграция ``0004`` нормализовала existing
+    ``rir='ripe'`` rows."""
 
 
 class Tier(StrEnum):
