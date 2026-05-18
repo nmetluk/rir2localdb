@@ -52,6 +52,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Final, Literal
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from rir2localdb.config import Settings
@@ -149,75 +150,94 @@ async def run_sync(
         async with engine.connect() as connection:
             txn = await connection.begin()
             try:
-                raw_dbapi = await connection.get_raw_connection()
-                raw_conn: asyncpg.Connection = raw_dbapi.driver_connection
-                assert raw_conn is not None, "asyncpg driver_connection missing"
-
-                run_id = int(
-                    await raw_conn.fetchval(
-                        "INSERT INTO sync_run (tier, status) "
-                        "VALUES ($1, 'running') RETURNING id",
-                        tier_label,
+                # Session over the same AsyncConnection — все SQLAlchemy
+                # операции в одной транзакции. INSERT sync_run / advisory
+                # lock / UPDATE sync_run идут через session, чтобы попасть
+                # в SQLAlchemy-tracked транзакцию. Raw asyncpg conn (для
+                # ETL COPY) добывается только когда нужен — после первой
+                # SQLAlchemy-операции, чтобы BEGIN уже был отправлен на
+                # сервер и asyncpg видел себя внутри транзакции.
+                async with AsyncSession(
+                    bind=connection, expire_on_commit=False
+                ) as session:
+                    insert_result = await session.execute(
+                        text(
+                            "INSERT INTO sync_run (tier, status) "
+                            "VALUES (:tier, 'running') RETURNING id"
+                        ),
+                        {"tier": tier_label},
                     )
-                )
+                    run_id = int(insert_result.scalar_one())
 
-                got_lock = await raw_conn.fetchval(
-                    "SELECT pg_try_advisory_xact_lock($1)", ADVISORY_LOCK_KEY
-                )
-                if not got_lock:
-                    lock_error = "another sync_run is already running"
+                    lock_result = await session.execute(
+                        text("SELECT pg_try_advisory_xact_lock(:k)"),
+                        {"k": ADVISORY_LOCK_KEY},
+                    )
+                    got_lock = bool(lock_result.scalar_one())
+                    if not got_lock:
+                        lock_error = "another sync_run is already running"
+                        summary = _build_summary(
+                            run_id=run_id,
+                            tier_label=tier_label,
+                            status="failed",
+                            counters=_Counters(),
+                            error=lock_error,
+                            started=started,
+                        )
+                        await _finalize_sync_run(session, run_id, summary)
+                        await txn.commit()
+                        return summary
+
+                    # SQLAlchemy уже отправил BEGIN на сервер. Теперь
+                    # raw asyncpg conn видит активную транзакцию.
+                    raw_dbapi = await connection.get_raw_connection()
+                    raw_conn: asyncpg.Connection = raw_dbapi.driver_connection
+                    assert raw_conn is not None, "asyncpg driver_connection missing"
+
+                    sources = sources_for_tiers(set(tier_list))
+                    counters = _Counters()
+                    async with make_http_client(settings) as client:
+                        for source in sources:
+                            try:
+                                async with session.begin_nested():
+                                    outcome = await _run_one_source(
+                                        source=source,
+                                        session=session,
+                                        raw_conn=raw_conn,
+                                        client=client,
+                                        settings=settings,
+                                        run_id=run_id,
+                                    )
+                                counters.add(outcome)
+                            except Exception as exc:
+                                logger.exception(
+                                    "source %s failed: %s", source.url, exc
+                                )
+                                counters.files_errored += 1
+
+                    status: Literal["success", "failed"]
+                    final_error: str | None
+                    if (
+                        counters.total_sources > 0
+                        and counters.files_errored == counters.total_sources
+                    ):
+                        status = "failed"
+                        final_error = (
+                            f"all {counters.files_errored} source(s) failed"
+                        )
+                    else:
+                        status = "success"
+                        final_error = None
+
                     summary = _build_summary(
                         run_id=run_id,
                         tier_label=tier_label,
-                        status="failed",
-                        counters=_Counters(),
-                        error=lock_error,
+                        status=status,
+                        counters=counters,
+                        error=final_error,
                         started=started,
                     )
-                    await _finalize_sync_run(raw_conn, run_id, summary)
-                    await txn.commit()
-                    return summary
-
-                sources = sources_for_tiers(set(tier_list))
-                counters = _Counters()
-                async with (
-                    make_http_client(settings) as client,
-                    AsyncSession(bind=connection, expire_on_commit=False) as session,
-                ):
-                    for source in sources:
-                        try:
-                            async with session.begin_nested():
-                                outcome = await _run_one_source(
-                                    source=source,
-                                    session=session,
-                                    raw_conn=raw_conn,
-                                    client=client,
-                                    settings=settings,
-                                    run_id=run_id,
-                                )
-                            counters.add(outcome)
-                        except Exception as exc:
-                            logger.exception("source %s failed: %s", source.url, exc)
-                            counters.files_errored += 1
-
-                status: Literal["success", "failed"]
-                final_error: str | None
-                if counters.total_sources > 0 and counters.files_errored == counters.total_sources:
-                    status = "failed"
-                    final_error = f"all {counters.files_errored} source(s) failed"
-                else:
-                    status = "success"
-                    final_error = None
-
-                summary = _build_summary(
-                    run_id=run_id,
-                    tier_label=tier_label,
-                    status=status,
-                    counters=counters,
-                    error=final_error,
-                    started=started,
-                )
-                await _finalize_sync_run(raw_conn, run_id, summary)
+                    await _finalize_sync_run(session, run_id, summary)
 
                 if dry_run:
                     await txn.rollback()
@@ -347,20 +367,30 @@ def _build_summary(
 
 
 async def _finalize_sync_run(
-    raw_conn: asyncpg.Connection, run_id: int, summary: SyncRunSummary
+    session: AsyncSession, run_id: int, summary: SyncRunSummary
 ) -> None:
-    """UPDATE sync_run в финальное состояние, кладёт summary в stats jsonb."""
+    """UPDATE sync_run в финальное состояние, кладёт summary в stats jsonb.
+
+    Идёт через SQLAlchemy session (а не raw asyncpg), чтобы UPDATE
+    был частью SQLAlchemy-tracked транзакции — иначе на dry_run
+    rollback может оставить эту строку закоммиченной.
+    """
     stats_payload: dict[str, Any] = {
         k: v
         for k, v in asdict(summary).items()
         if k not in ("run_id", "tier", "status", "error")
     }
-    await raw_conn.execute(
-        "UPDATE sync_run "
-        "SET status=$1, finished_at=now(), stats=$2::jsonb, error=$3 "
-        "WHERE id=$4",
-        summary.status,
-        json.dumps(stats_payload),
-        summary.error,
-        run_id,
+    await session.execute(
+        text(
+            "UPDATE sync_run "
+            "SET status=:status, finished_at=now(), stats=CAST(:stats AS jsonb), error=:err "
+            "WHERE id=:rid"
+        ),
+        {
+            "status": summary.status,
+            "stats": json.dumps(stats_payload),
+            "err": summary.error,
+            "rid": run_id,
+        },
     )
+    await session.flush()
