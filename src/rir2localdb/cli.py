@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.resources
+import json
 from typing import Annotated
 
 import alembic.command
@@ -230,10 +231,16 @@ def _fmt_dt(value: object) -> str:
 def _rpsl_records_from_stats(stats: object) -> int | None:
     """Достать ``etl_rpsl_records_total`` из JSONB stats.
 
-    Postgres+asyncpg возвращают JSONB как ``dict``, но если в строке
-    нет stats (старые run'ы до Stage 2-05) или поле отсутствует —
+    SQLAlchemy через asyncpg возвращает JSONB как str (без custom
+    type codec'а); поэтому сначала парсим JSON если получили str.
+    Для старых run'ов без stats или для run'ов без RPSL-полей —
     возвращаем ``None``, чтобы CLI показал пустую ячейку.
     """
+    if isinstance(stats, str):
+        try:
+            stats = json.loads(stats)
+        except (ValueError, TypeError):
+            return None
     if not isinstance(stats, dict):
         return None
     value = stats.get("etl_rpsl_records_total")
