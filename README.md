@@ -78,6 +78,15 @@ Sync будет запускаться ежедневно в 03:00 UTC. Логи
 `journalctl -u rir2localdb-sync`. Подробности и hardening —
 [`docs/07-operations.md`](docs/07-operations.md) § «Daily sync via systemd».
 
+### Observability
+
+- **Prometheus metrics** на `/v1/metrics`: sync_run / per-table rows /
+  source freshness / HTTP requests. Scrape config и список метрик —
+  [`docs/07-operations.md`](docs/07-operations.md) § «Prometheus metrics».
+- **Structured JSON logs** в production режиме (systemd unit ставит
+  `RIR2LOCALDB_LOG_FORMAT=json`). Парсинг через
+  `journalctl -o cat | jq`. Примеры — там же.
+
 ## Документация
 
 - [`docs/00-overview.md`](docs/00-overview.md) — цели, область применения, не-цели

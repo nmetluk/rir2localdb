@@ -138,6 +138,104 @@ RIR2LOCALDB_TIERS_ENABLED=core         # comma-separated: core,rich,arin-rr
 - **Не пишем PII** (там и так нет ничего, но в логах не должно
   быть полных значений `org-name`, `descr` и пр. — только handle/URL).
 
+## Prometheus metrics
+
+`GET /v1/metrics` отдаёт метрики в Prometheus exposition format
+(`text/plain; version=0.0.4`).
+
+**Список метрик** (см. `src/rir2localdb/api/metrics.py`):
+
+| Метрика | Тип | Labels | Описание |
+|---|---|---|---|
+| `rir2localdb_last_sync_run_finished_timestamp_seconds` | gauge | — | Unix timestamp последнего finished sync_run |
+| `rir2localdb_last_sync_run_duration_seconds` | gauge | — | Длительность последнего sync_run, секунды |
+| `rir2localdb_last_sync_run_status` | gauge | — | 1 = success, 0 = failed, -1 = running/unknown |
+| `rir2localdb_table_rows` | gauge | `table` | Приблизительное число строк (из `pg_class.reltuples`) |
+| `rir2localdb_source_last_fetched_timestamp_seconds` | gauge | `rir`, `kind`, `url` | Когда последний раз успешно скачивали этот источник |
+| `rir2localdb_http_requests_total` | counter | `method`, `endpoint`, `status` | HTTP-запросы к API |
+| `rir2localdb_http_request_duration_seconds` | histogram | `method`, `endpoint` | HTTP latency, buckets от 5ms до 10s |
+
+`table_rows` использует **approximation** из `pg_class.reltuples`
+(быстро — sub-millisecond), а не `SELECT COUNT(*)` (медленно на 5M+
+строк). Цена — точность зависит от `ANALYZE`. PostgreSQL autovacuum
+запускает ANALYZE автоматически после значимых изменений; для
+безопасности можно `VACUUM ANALYZE` после миграций.
+
+`source_last_fetched_timestamp` ограничен ~29 источниками
+(`sources.py`) — cardinality explosion невозможна.
+
+`/v1/metrics` сам **не считается** в `http_requests_total` — иначе на
+каждый Prometheus scrape счётчик растёт «сам от себя».
+
+**Prometheus scrape config:**
+
+```yaml
+scrape_configs:
+  - job_name: rir2localdb
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['localhost:8000']
+    metrics_path: /v1/metrics
+```
+
+**Полезные queries:**
+
+```promql
+# Время с последнего успешного sync (если sync ходит ежедневно — >86400 = алерт)
+time() - rir2localdb_last_sync_run_finished_timestamp_seconds
+
+# Sync длится дольше обычного (baseline ~8.5 мин incremental, ~24 мин full)
+rir2localdb_last_sync_run_duration_seconds > 1800
+
+# Per-table row counts
+rir2localdb_table_rows{table="inetnum"}
+
+# Source не обновлялся 2 дня
+time() - rir2localdb_source_last_fetched_timestamp_seconds > 172800
+```
+
+## Structured JSON logs
+
+`RIR2LOCALDB_LOG_FORMAT=json` (default `console`) переключает все
+логи на single-line JSON per event через ``structlog``. Production
+systemd unit (см. `deploy/systemd/rir2localdb-sync.service`)
+устанавливает `Environment=RIR2LOCALDB_LOG_FORMAT=json`.
+
+**Формат события:**
+
+```json
+{
+  "timestamp": "2026-05-18T19:07:44.123456Z",
+  "level": "info",
+  "logger": "rir2localdb.sync.orchestrator",
+  "event": "sync_run finished",
+  "run_id": 2,
+  "files_total": 29,
+  "files_new": 0,
+  "files_updated": 13,
+  "duration_ms": 507469
+}
+```
+
+Все стандартные поля (`timestamp`, `level`, `logger`, `event`) +
+произвольные `key=value` через `structlog.contextvars` / kwargs.
+
+**jq-примеры в journald:**
+
+```bash
+# WARNING и выше за последний час
+journalctl -u rir2localdb-sync --since "1 hour ago" -o cat | \
+  jq -c 'select(.level == "warning" or .level == "error")'
+
+# События orchestrator'а текущего run'а
+journalctl -u rir2localdb-sync -o cat | \
+  jq -c 'select(.logger | startswith("rir2localdb.sync"))'
+
+# Извлечь run-summary в табличку
+journalctl -u rir2localdb-sync -o cat | \
+  jq -r 'select(.event == "sync_run finished") | [.run_id, .duration_ms, .files_updated] | @tsv'
+```
+
 ## Метрики (Stage 3)
 
 Эндпоинт `/metrics` для Prometheus, минимальный набор:
