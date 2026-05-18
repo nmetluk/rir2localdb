@@ -110,12 +110,19 @@ _OBJECT_TYPE_TO_TABLE: Final[dict[str, str]] = {
     "route6": "route6",
     "as-block": "as_block",
     "role": "role",
+    "mntner": "mntner",
+    "person": "person",
+    "as-set": "as_set",
 }
 
 
-# Canonical порядок финального flush'а. Списки fixed, в logging это
-# даёт стабильный output.
+# Canonical порядок финального flush'а. mntner и person идут раньше
+# объектов, которые на них ссылаются — FK не enforced (см. ADR-0007),
+# но логический порядок упрощает диагностику. Списки fixed, в logging
+# это даёт стабильный output.
 _UPSERT_ORDER: Final[tuple[str, ...]] = (
+    "mntner",
+    "person",
     "organisation",
     "role",
     "inetnum",
@@ -124,6 +131,7 @@ _UPSERT_ORDER: Final[tuple[str, ...]] = (
     "route",
     "route6",
     "as_block",
+    "as_set",
 )
 
 
@@ -262,6 +270,61 @@ _ROLE_COLUMNS: Final[tuple[str, ...]] = (
     "raw",
 )
 
+_MNTNER_COLUMNS: Final[tuple[str, ...]] = (
+    "rir",
+    "mntner",
+    "descr",
+    "admin_c",
+    "tech_c",
+    "upd_to",
+    "mnt_nfy",
+    "auth",
+    "remarks",
+    "notify",
+    "abuse_mailbox",
+    "mnt_by",
+    "referral_by",
+    "created",
+    "last_modified",
+    "source",
+    "raw",
+)
+
+_PERSON_COLUMNS: Final[tuple[str, ...]] = (
+    "rir",
+    "nic_hdl",
+    "person",
+    "address",
+    "phone",
+    "fax_no",
+    "email",
+    "remarks",
+    "notify",
+    "mnt_by",
+    "abuse_mailbox",
+    "created",
+    "last_modified",
+    "source",
+    "raw",
+)
+
+_AS_SET_COLUMNS: Final[tuple[str, ...]] = (
+    "rir",
+    "as_set",
+    "descr",
+    "members",
+    "mbrs_by_ref",
+    "remarks",
+    "tech_c",
+    "admin_c",
+    "notify",
+    "mnt_by",
+    "created",
+    "last_modified",
+    "source",
+    "raw",
+)
+
 
 _TABLE_COLUMNS: Final[dict[str, tuple[str, ...]]] = {
     "inetnum": _INETNUM_COLUMNS,
@@ -272,6 +335,9 @@ _TABLE_COLUMNS: Final[dict[str, tuple[str, ...]]] = {
     "route6": _ROUTE6_COLUMNS,
     "as_block": _AS_BLOCK_COLUMNS,
     "role": _ROLE_COLUMNS,
+    "mntner": _MNTNER_COLUMNS,
+    "person": _PERSON_COLUMNS,
+    "as_set": _AS_SET_COLUMNS,
 }
 
 
@@ -778,6 +844,79 @@ def _to_role_row(obj: RpslObject, rir: str, run_id: int) -> tuple[Any, ...] | No
     )
 
 
+def _to_mntner_row(obj: RpslObject, rir: str, run_id: int) -> tuple[Any, ...] | None:
+    mntner = _first(obj, "mntner")
+    if not mntner:
+        logger.warning("rpsl_etl skip mntner: no mntner handle rir=%s", rir)
+        return None
+    return (
+        rir,
+        mntner,
+        _first(obj, "descr"),
+        obj.get("admin-c"),
+        obj.get("tech-c"),
+        obj.get("upd-to"),
+        obj.get("mnt-nfy"),
+        obj.get("auth"),
+        obj.get("remarks"),
+        obj.get("notify"),
+        _first(obj, "abuse-mailbox"),
+        obj.get("mnt-by"),
+        _first(obj, "referral-by"),
+        _parse_datetime_or_none(obj, "created", rir, "mntner"),
+        _parse_datetime_or_none(obj, "last-modified", rir, "mntner"),
+        _first(obj, "source"),
+        obj,
+    )
+
+
+def _to_person_row(obj: RpslObject, rir: str, run_id: int) -> tuple[Any, ...] | None:
+    nic_hdl = _first(obj, "nic-hdl")
+    if not nic_hdl:
+        logger.warning("rpsl_etl skip person: no nic-hdl rir=%s", rir)
+        return None
+    return (
+        rir,
+        nic_hdl,
+        _first(obj, "person"),
+        obj.get("address"),
+        obj.get("phone"),
+        obj.get("fax-no"),
+        obj.get("e-mail") or obj.get("email"),
+        obj.get("remarks"),
+        obj.get("notify"),
+        obj.get("mnt-by"),
+        _first(obj, "abuse-mailbox"),
+        _parse_datetime_or_none(obj, "created", rir, "person"),
+        _parse_datetime_or_none(obj, "last-modified", rir, "person"),
+        _first(obj, "source"),
+        obj,
+    )
+
+
+def _to_as_set_row(obj: RpslObject, rir: str, run_id: int) -> tuple[Any, ...] | None:
+    as_set = _first(obj, "as-set")
+    if not as_set:
+        logger.warning("rpsl_etl skip as-set: no as-set handle rir=%s", rir)
+        return None
+    return (
+        rir,
+        as_set,
+        _first(obj, "descr"),
+        obj.get("members"),
+        obj.get("mbrs-by-ref"),
+        obj.get("remarks"),
+        obj.get("tech-c"),
+        obj.get("admin-c"),
+        obj.get("notify"),
+        obj.get("mnt-by"),
+        _parse_datetime_or_none(obj, "created", rir, "as-set"),
+        _parse_datetime_or_none(obj, "last-modified", rir, "as-set"),
+        _first(obj, "source"),
+        obj,
+    )
+
+
 def _parse_datetime_or_none(obj: RpslObject, key: str, rir: str, obj_type: str) -> datetime | None:
     """Парсить ``obj[key][0]`` как datetime; на ValueError — warning + None.
 
@@ -803,6 +942,9 @@ _MAPPERS: Final[dict[str, _MapperType]] = {
     "route6": _to_route6_rows,
     "as_block": _to_as_block_row,
     "role": _to_role_row,
+    "mntner": _to_mntner_row,
+    "person": _to_person_row,
+    "as_set": _to_as_set_row,
 }
 
 
@@ -954,6 +1096,64 @@ CREATE TEMP TABLE staging_rpsl_role (
     abuse_mailbox TEXT,
     admin_c       TEXT[],
     tech_c        TEXT[],
+    mnt_by        TEXT[],
+    created       TIMESTAMPTZ,
+    last_modified TIMESTAMPTZ,
+    source        TEXT,
+    raw           JSONB
+) ON COMMIT DROP;
+
+DROP TABLE IF EXISTS staging_rpsl_mntner;
+CREATE TEMP TABLE staging_rpsl_mntner (
+    rir           TEXT,
+    mntner        TEXT,
+    descr         TEXT,
+    admin_c       TEXT[],
+    tech_c        TEXT[],
+    upd_to        TEXT[],
+    mnt_nfy       TEXT[],
+    auth          TEXT[],
+    remarks       TEXT[],
+    notify        TEXT[],
+    abuse_mailbox TEXT,
+    mnt_by        TEXT[],
+    referral_by   TEXT,
+    created       TIMESTAMPTZ,
+    last_modified TIMESTAMPTZ,
+    source        TEXT,
+    raw           JSONB
+) ON COMMIT DROP;
+
+DROP TABLE IF EXISTS staging_rpsl_person;
+CREATE TEMP TABLE staging_rpsl_person (
+    rir           TEXT,
+    nic_hdl       TEXT,
+    person        TEXT,
+    address       TEXT[],
+    phone         TEXT[],
+    fax_no        TEXT[],
+    email         TEXT[],
+    remarks       TEXT[],
+    notify        TEXT[],
+    mnt_by        TEXT[],
+    abuse_mailbox TEXT,
+    created       TIMESTAMPTZ,
+    last_modified TIMESTAMPTZ,
+    source        TEXT,
+    raw           JSONB
+) ON COMMIT DROP;
+
+DROP TABLE IF EXISTS staging_rpsl_as_set;
+CREATE TEMP TABLE staging_rpsl_as_set (
+    rir           TEXT,
+    as_set        TEXT,
+    descr         TEXT,
+    members       TEXT[],
+    mbrs_by_ref   TEXT[],
+    remarks       TEXT[],
+    tech_c        TEXT[],
+    admin_c       TEXT[],
+    notify        TEXT[],
     mnt_by        TEXT[],
     created       TIMESTAMPTZ,
     last_modified TIMESTAMPTZ,
@@ -1181,6 +1381,92 @@ ON CONFLICT (rir, nic_hdl) DO UPDATE SET
 RETURNING (xmax = 0) AS inserted
 """
 
+_UPSERT_MNTNER_SQL: Final[str] = """
+INSERT INTO mntner (
+    rir, mntner, descr, admin_c, tech_c, upd_to, mnt_nfy, auth, remarks,
+    notify, abuse_mailbox, mnt_by, referral_by, created, last_modified,
+    source, raw, first_seen_run, last_seen_run
+)
+SELECT
+    rir, mntner, descr, admin_c, tech_c, upd_to, mnt_nfy, auth, remarks,
+    notify, abuse_mailbox, mnt_by, referral_by, created, last_modified,
+    source, raw, $1, $1
+FROM staging_rpsl_mntner
+ON CONFLICT (rir, mntner) DO UPDATE SET
+    descr         = EXCLUDED.descr,
+    admin_c       = EXCLUDED.admin_c,
+    tech_c        = EXCLUDED.tech_c,
+    upd_to        = EXCLUDED.upd_to,
+    mnt_nfy       = EXCLUDED.mnt_nfy,
+    auth          = EXCLUDED.auth,
+    remarks       = EXCLUDED.remarks,
+    notify        = EXCLUDED.notify,
+    abuse_mailbox = EXCLUDED.abuse_mailbox,
+    mnt_by        = EXCLUDED.mnt_by,
+    referral_by   = EXCLUDED.referral_by,
+    created       = EXCLUDED.created,
+    last_modified = EXCLUDED.last_modified,
+    source        = EXCLUDED.source,
+    raw           = EXCLUDED.raw,
+    last_seen_run = EXCLUDED.last_seen_run
+RETURNING (xmax = 0) AS inserted
+"""
+
+_UPSERT_PERSON_SQL: Final[str] = """
+INSERT INTO person (
+    rir, nic_hdl, person, address, phone, fax_no, email, remarks, notify,
+    mnt_by, abuse_mailbox, created, last_modified, source, raw,
+    first_seen_run, last_seen_run
+)
+SELECT
+    rir, nic_hdl, person, address, phone, fax_no, email, remarks, notify,
+    mnt_by, abuse_mailbox, created, last_modified, source, raw, $1, $1
+FROM staging_rpsl_person
+ON CONFLICT (rir, nic_hdl) DO UPDATE SET
+    person        = EXCLUDED.person,
+    address       = EXCLUDED.address,
+    phone         = EXCLUDED.phone,
+    fax_no        = EXCLUDED.fax_no,
+    email         = EXCLUDED.email,
+    remarks       = EXCLUDED.remarks,
+    notify        = EXCLUDED.notify,
+    mnt_by        = EXCLUDED.mnt_by,
+    abuse_mailbox = EXCLUDED.abuse_mailbox,
+    created       = EXCLUDED.created,
+    last_modified = EXCLUDED.last_modified,
+    source        = EXCLUDED.source,
+    raw           = EXCLUDED.raw,
+    last_seen_run = EXCLUDED.last_seen_run
+RETURNING (xmax = 0) AS inserted
+"""
+
+_UPSERT_AS_SET_SQL: Final[str] = """
+INSERT INTO as_set (
+    rir, as_set, descr, members, mbrs_by_ref, remarks, tech_c, admin_c,
+    notify, mnt_by, created, last_modified, source, raw,
+    first_seen_run, last_seen_run
+)
+SELECT
+    rir, as_set, descr, members, mbrs_by_ref, remarks, tech_c, admin_c,
+    notify, mnt_by, created, last_modified, source, raw, $1, $1
+FROM staging_rpsl_as_set
+ON CONFLICT (rir, as_set) DO UPDATE SET
+    descr         = EXCLUDED.descr,
+    members       = EXCLUDED.members,
+    mbrs_by_ref   = EXCLUDED.mbrs_by_ref,
+    remarks       = EXCLUDED.remarks,
+    tech_c        = EXCLUDED.tech_c,
+    admin_c       = EXCLUDED.admin_c,
+    notify        = EXCLUDED.notify,
+    mnt_by        = EXCLUDED.mnt_by,
+    created       = EXCLUDED.created,
+    last_modified = EXCLUDED.last_modified,
+    source        = EXCLUDED.source,
+    raw           = EXCLUDED.raw,
+    last_seen_run = EXCLUDED.last_seen_run
+RETURNING (xmax = 0) AS inserted
+"""
+
 
 _UPSERT_SQL: Final[dict[str, str]] = {
     "inetnum": _UPSERT_INETNUM_SQL,
@@ -1191,4 +1477,7 @@ _UPSERT_SQL: Final[dict[str, str]] = {
     "route6": _UPSERT_ROUTE6_SQL,
     "as_block": _UPSERT_AS_BLOCK_SQL,
     "role": _UPSERT_ROLE_SQL,
+    "mntner": _UPSERT_MNTNER_SQL,
+    "person": _UPSERT_PERSON_SQL,
+    "as_set": _UPSERT_AS_SET_SQL,
 }
