@@ -15,33 +15,35 @@ jobs:
       CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       REPO: ${{ github.repository }}
       SHA: ${{ github.sha }}
-      EVENT_NAME: ${{ github.event_name }}
-      EVENT_BEFORE: ${{ github.event.before }}
-      EVENT_AFTER: ${{ github.event.after }}
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 1
 
-      - name: build and send notification
+      - name: find latest session-log
+        id: find
         run: |
           set -e
+          files=$(git ls-tree -r --name-only HEAD -- .claude/session-log/ \
+            | grep '\.md$' \
+            | grep -v -E '(README|_template)' \
+            || true)
 
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            files=$(git ls-tree -r --name-only HEAD -- .claude/session-log/ | grep '\.md$' | grep -v README | grep -v _template || true)
-          elif [ -z "$EVENT_BEFORE" ] || [ "$EVENT_BEFORE" = "0000000000000000000000000000000000000000" ]; then
-            files=$(git ls-tree -r --name-only "$EVENT_AFTER" -- .claude/session-log/ | grep '\.md$' | grep -v README | grep -v _template || true)
-          else
-            files=$(git diff --name-only --diff-filter=AM "$EVENT_BEFORE" "$EVENT_AFTER" -- '.claude/session-log/*.md' | grep -v README | grep -v _template || true)
-          fi
-
-          file=$(echo "$files" | sort -r | head -n1)
-          if [ -z "$file" ]; then
-            echo "No session-log changes in this push — nothing to notify."
+          if [ -z "$files" ]; then
+            echo "No session-log files in repo — nothing to notify."
+            echo "latest=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          echo "Latest session-log: $file"
 
+          latest=$(echo "$files" | sort -r | head -n1)
+          echo "Latest session-log: $latest"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+
+      - name: build and send notification
+        if: steps.find.outputs.latest != ''
+        run: |
+          set -e
+          file="${{ steps.find.outputs.latest }}"
           sha_short="${SHA:0:7}"
           commit_url="https://github.com/${REPO}/commit/${SHA}"
           file_url="https://github.com/${REPO}/blob/main/${file}"
@@ -49,7 +51,8 @@ jobs:
 
           {
             printf '🟢 <b>%s</b> — новый session-log\n\n' "$REPO"
-            printf '<a href="%s"><code>%s</code></a> → <a href="%s"><code>%s</code></a>\n\n' "$commit_url" "$sha_short" "$file_url" "$file"
+            printf '<a href="%s"><code>%s</code></a> → <a href="%s"><code>%s</code></a>\n\n' \
+              "$commit_url" "$sha_short" "$file_url" "$file"
             printf '<pre>'
             head -c 3500 "$file" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'
             if [ "$(wc -c < "$file")" -gt 3500 ]; then
@@ -58,7 +61,6 @@ jobs:
             printf '</pre>\n'
           } > "$msg"
 
-          # Сохраним response для диагностики
           response_file=/tmp/tg-response.txt
           http_code=$(curl -sS -o "$response_file" -w '%{http_code}' \
             "https://api.telegram.org/bot${TOKEN}/sendMessage" \
@@ -76,8 +78,6 @@ jobs:
             echo "::error::Telegram API returned non-200 ($http_code)"
             exit 1
           fi
-
-          # Проверка `ok: true` в JSON-ответе
           if ! grep -q '"ok":true' "$response_file"; then
             echo "::error::Telegram API returned ok=false"
             exit 1
