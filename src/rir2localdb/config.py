@@ -13,7 +13,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import PostgresDsn, field_validator
+from pydantic import Field, PostgresDsn, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -64,6 +64,12 @@ class Settings(BaseSettings):
     single-line JSON per event для production-парсинга через ``jq`` /
     Loki / Elastic.
     """
+
+    gc_grace_runs: int = Field(default=7, ge=1, le=365)
+    """Сколько последовательных successful sync_run'ов без появления
+    записи нужно, чтобы пометить её ``is_stale = TRUE``. Default 7 ≈
+    неделя при daily timer'е. Пережёвывает один failed run, выходной с
+    downtime, slowly-rolling RIR snapshot. См. ADR-0008."""
 
     @field_validator("log_format", mode="before")
     @classmethod
