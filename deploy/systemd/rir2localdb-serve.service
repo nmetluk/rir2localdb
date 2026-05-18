@@ -1,0 +1,65 @@
+[Unit]
+Description=rir2localdb HTTP API server (FastAPI/uvicorn)
+Documentation=https://github.com/nmetluk/rir2localdb
+After=network-online.target postgresql.service
+Wants=network-online.target
+# Намеренно НЕ ``Requires=postgresql.service``: postgres может быть на
+# другом хосте (см. ``RIR2LOCALDB_DATABASE_URL`` в .env). ``After=`` даёт
+# только ordering при boot'е, не runtime-зависимость.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+ConditionPathExists=/home/rir2local/rir2localdb/.venv/bin/rir2localdb
+
+[Service]
+Type=simple
+User=rir2local
+Group=rir2local
+WorkingDirectory=/home/rir2local/rir2localdb
+
+# Параметризуемый bind через override-файл. Leading dash в
+# ``EnvironmentFile=-`` — «не требовать существования» (unit стартует
+# с дефолтами если файла нет). Production override:
+#
+#   /etc/rir2localdb/serve.env:
+#     RIR2LOCALDB_SERVE_HOST=0.0.0.0
+#     RIR2LOCALDB_SERVE_PORT=18000
+EnvironmentFile=-/etc/rir2localdb/serve.env
+
+Environment=RIR2LOCALDB_SERVE_HOST=127.0.0.1
+Environment=RIR2LOCALDB_SERVE_PORT=8000
+Environment=RIR2LOCALDB_LOG_FORMAT=json
+Environment=RIR2LOCALDB_LOG_LEVEL=INFO
+
+ExecStart=/home/rir2local/rir2localdb/.venv/bin/rir2localdb serve --host ${RIR2LOCALDB_SERVE_HOST} --port ${RIR2LOCALDB_SERVE_PORT}
+
+Restart=on-failure
+RestartSec=10s
+
+# Логирование
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=rir2localdb-serve
+
+# Sandbox / hardening — без ReadWritePaths (serve только читает БД).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+# AF_NETLINK нужен для async DNS resolution в asyncpg/httpx (libc
+# resolver hints через netlink-socket); без него — загадочные timeouts.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+
+# uvicorn worker обычно <200MB, 1GB запас.
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target
