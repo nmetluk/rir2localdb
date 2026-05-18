@@ -301,6 +301,41 @@ async def test_status_empty_db(api_client: AsyncClient, clean_db: asyncpg.Connec
     assert data["db_alive"] is True
     assert data["latest_sync_run"] is None
     assert data["sources"] == []
+    assert data["summary_by_rir"] == []
+
+
+async def test_status_includes_per_rir_summary(
+    api_client: AsyncClient, clean_db: asyncpg.Connection
+) -> None:
+    """После populate с двух разных RIR summary_by_rir содержит две записи."""
+    run_id = await _seed_sync_run(clean_db)
+    # ARIN: 1 ipv4 + 1 asn.
+    await _seed_ipv4(clean_db, run_id, rir="arin", start="8.0.0.0", value=16777216)
+    await _seed_asn(clean_db, run_id, rir="arin", start_asn=15169, count=1)
+    # RIPE: 1 ipv4.
+    await _seed_ipv4(clean_db, run_id, rir="ripencc", start="2.0.0.0", value=65536)
+    # sync_file для двух RIR'ов.
+    await clean_db.execute(
+        """
+        INSERT INTO sync_file
+            (url, rir, tier, kind, last_run_id, last_status, last_fetched_at)
+        VALUES
+            ('https://t.test/arin', 'arin', 'core', 'delegated', $1, 'updated', now()),
+            ('https://t.test/ripe', 'ripencc', 'core', 'delegated', $1, 'new', now())
+        """,
+        run_id,
+    )
+
+    response = await api_client.get("/v1/status")
+    assert response.status_code == 200
+    summary = {r["rir"]: r for r in response.json()["summary_by_rir"]}
+    assert set(summary) == {"arin", "ripencc"}
+    assert summary["arin"]["ip_allocations"] == 1
+    assert summary["arin"]["asn_allocations"] == 1
+    assert summary["ripencc"]["ip_allocations"] == 1
+    assert summary["ripencc"]["asn_allocations"] == 0
+    assert summary["arin"]["last_fetched_at"] is not None
+    assert summary["ripencc"]["last_fetched_at"] is not None
 
 
 async def test_ip_overlap_returns_most_specific(

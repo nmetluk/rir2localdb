@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel
@@ -50,6 +50,15 @@ class AsnLookupResponse(BaseModel):
     last_seen_run: int
 
 
+class RirSummary(BaseModel):
+    """Агрегаты на один RIR. Используется в ``StatusResponse.summary_by_rir``."""
+
+    rir: str
+    ip_allocations: int
+    asn_allocations: int
+    last_fetched_at: datetime | None
+
+
 class StatusResponse(BaseModel):
     """``GET /v1/status``."""
 
@@ -57,6 +66,9 @@ class StatusResponse(BaseModel):
     """Сериализованная строка ``sync_run`` (последний по ``started_at``)."""
     sources: list[dict[str, Any]]
     """Строки ``sync_file`` отсортированы по ``last_fetched_at DESC``."""
+    summary_by_rir: list[RirSummary]
+    """Сводка по каждому RIR: число записей в ip/asn-таблицах и
+    свежесть данных. Удобнее для дашбордов чем плоский ``sources``."""
     db_alive: bool
 
 

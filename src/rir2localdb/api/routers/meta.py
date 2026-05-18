@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import text
 
-from rir2localdb.api.schemas import HealthzResponse, StatusResponse
+from rir2localdb.api.schemas import HealthzResponse, RirSummary, StatusResponse
 
 router = APIRouter()
 
@@ -34,7 +34,7 @@ async def readyz(request: Request) -> dict[str, str]:
 
 @router.get("/status", response_model=StatusResponse)
 async def status(request: Request) -> StatusResponse:
-    """Сводка состояния: последний sync_run + список sync_file + db_alive."""
+    """Сводка состояния: последний sync_run + sync_file + per-RIR агрегаты."""
     sessionmaker = request.app.state.sessionmaker
     try:
         async with sessionmaker() as session:
@@ -65,14 +65,56 @@ async def status(request: Request) -> StatusResponse:
                 .mappings()
                 .all()
             )
+            ip_counts = {
+                row["rir"]: row["count"]
+                for row in (
+                    await session.execute(
+                        text("SELECT rir, COUNT(*) AS count FROM ip_allocation GROUP BY rir")
+                    )
+                ).mappings()
+            }
+            asn_counts = {
+                row["rir"]: row["count"]
+                for row in (
+                    await session.execute(
+                        text("SELECT rir, COUNT(*) AS count FROM asn_allocation GROUP BY rir")
+                    )
+                ).mappings()
+            }
+            fetched_at = {
+                row["rir"]: row["last_fetched_at"]
+                for row in (
+                    await session.execute(
+                        text(
+                            "SELECT rir, MAX(last_fetched_at) AS last_fetched_at "
+                            "FROM sync_file GROUP BY rir"
+                        )
+                    )
+                ).mappings()
+            }
         db_alive = True
     except Exception:
         latest_run = None
         sources_rows = []
+        ip_counts = {}
+        asn_counts = {}
+        fetched_at = {}
         db_alive = False
+
+    all_rirs = sorted(set(ip_counts) | set(asn_counts) | set(fetched_at))
+    summary_by_rir = [
+        RirSummary(
+            rir=r,
+            ip_allocations=ip_counts.get(r, 0),
+            asn_allocations=asn_counts.get(r, 0),
+            last_fetched_at=fetched_at.get(r),
+        )
+        for r in all_rirs
+    ]
 
     return StatusResponse(
         latest_sync_run=dict(latest_run) if latest_run else None,
         sources=[dict(r) for r in sources_rows],
+        summary_by_rir=summary_by_rir,
         db_alive=db_alive,
     )
