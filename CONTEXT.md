@@ -27,13 +27,14 @@
 
 **Stage 1: Core sync + minimal API — ЗАКРЫТ ✅ (2026-05-18).**
 **Stage 1.50: Стабилизация — ЗАКРЫТА ✅ (2026-05-18).**
-**Stage 2 в работе. Шаги 2-01 и 2-02 закрыты.**
+**Stage 2 в работе. Шаги 2-01, 2-02 и 2-03 закрыты.**
 
 Stage 2 разбит на 6 шагов:
 - 2-01 ✅ RPSL parser (`parsers/rpsl.py`, 18 тестов).
 - 2-02 ✅ миграция `0002_rpsl_tables` (8 таблиц, ADR-0007).
-- 2-03 ⏳ RPSL ETL (`etl/rpsl_etl.py`) — следующий.
-- 2-04 ⏳ расширение API (поле `rpsl` в ответах).
+- 2-03 ✅ RPSL ETL (`etl/rpsl_etl.py`, 17 тестов; batched COPY +
+  per-table staging + JSONB binary codec).
+- 2-04 ⏳ расширение API (поле `rpsl` в ответах) — следующий.
 - 2-05 ⏳ ARIN IRR tier.
 - 2-06 ⏳ RDAP fallback (опционально).
 
