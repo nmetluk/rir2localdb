@@ -81,20 +81,54 @@ Tue 2026-05-19 06:04:40 EEST  11h -         - rir2localdb-sync.timer rir2localdb
 ### Manual smoke run
 
 `sudo systemctl start --no-block rir2localdb-sync.service`:
-- ✅ Сервис стартовал сразу, без ошибок sandbox.
-- ✅ HTTP-запросы к RIR mirrors (afrinic/apnic/...) пошли через 2 сек.
-- ✅ Логи через journald (`journalctl -u rir2localdb-sync.service -f`).
-- ✅ Memory peak: 235.8M (Stage 2 был ~1GB, на этот раз меньше потому
-  что большинство файлов unchanged через md5/HEAD detection).
+
+```
+sync_run id=2 status=success
+  files: total=29 new=0 updated=13 unchanged=16 errored=0
+  parser: records_total=3,592,555
+  etl ip:  inserted=8       updated=341,259
+  etl asn: inserted=4       updated=47,079
+  etl rpsl: records=3,204,205 unknown_type=36,899 malformed=0
+           as_set:       inserted=11,424   updated=0
+           aut_num:      inserted=1        updated=30,019
+           inet6num:     inserted=63       updated=146,890
+           inetnum:      inserted=456      updated=1,247,628
+           mntner:       inserted=41,819   updated=0
+           organisation: inserted=5        updated=21,253
+           role:         inserted=1        updated=40,727
+           route:        inserted=3,270    updated=946,414
+           route6:       inserted=12       updated=677,324
+  duration: 507,469 ms (~8.5 минут)
+```
+
+- ✅ `code=exited, status=0/SUCCESS`.
+- ✅ Memory peak: 235.8M (Stage 2 first-run был ~1GB; меньше потому
+  что 16/29 файлов unchanged через md5/HEAD — ETL пропускается).
+- ✅ CPU time: 3 min 22 s wall, ~8.5 min total (большая часть — HTTP
+  fetch + parsing, ETL UPDATE'ы быстрые).
+- ✅ **Новые Stage 2.50 таблицы заполнились:** mntner +41,819,
+  as_set +11,424. Это объекты, которые при Stage 2 уходили в
+  ``objects_skipped_unknown_type``.
+- ✅ unknown_type=36,899 (down from 278k в Stage 2 первом sync'е).
+  Остаток — `key-cert`, `domain`, `irt`, `inet-rtr`, `route-set` —
+  out-of-scope для нашей RPSL coverage.
+
+Также: `person` пустой в этом sync'е (нет ни insert, ни update).
+RIPE `.utf8.gz` дамифицирует PII (`DUMY-RIPE` handles), и судя по
+выводу, реальных person-записей в дампах не публикуется — все они
+заменены на dummy. Это ожидаемо для PII compliance; контракт
+`admin-c="DUMY-RIPE"` → orphan reference сохраняется (фиксируется
+как known design в `02-99-stage-2-closed.md`).
 
 **Sandbox observations:** ничего не пришлось ослаблять.
 - DNS через `RestrictAddressFamilies=AF_INET AF_INET6` работает
   (httpx ходит к RIR'ам).
 - Postgres через TCP к localhost тоже OK.
 - `MemoryDenyWriteExecute` — asyncpg/Cython не JIT'ят, OK.
-- `ProtectHome=read-only` + `ReadWritePaths=/home/rir2local/rir2localdb/data`
-  — sync пишет только в `./data` (relative, от WorkingDirectory),
-  cache-файлы создаются нормально.
+- `ProtectHome=read-only` + `ReadWritePaths=/home/rir2local/
+  rir2localdb/data` — sync пишет только в `./data` (relative от
+  WorkingDirectory), cache-файлы создаются нормально.
+- `PrivateTmp=true` — httpx/asyncpg не используют `/tmp`, OK.
 
 ## Проверки
 
