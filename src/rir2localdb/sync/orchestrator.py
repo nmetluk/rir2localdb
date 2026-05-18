@@ -433,10 +433,15 @@ async def _finalize_sync_run(session: AsyncSession, run_id: int, summary: SyncRu
     stats_payload: dict[str, Any] = {
         k: v for k, v in asdict(summary).items() if k not in ("run_id", "tier", "status", "error")
     }
+    # ``clock_timestamp()``, а не ``now()``: внутри одной транзакции
+    # ``now()`` ≡ ``statement_timestamp()`` и возвращает время старта
+    # транзакции; после многоминутного sync'а finished_at оказался бы
+    # равен started_at. ``clock_timestamp()`` даёт реальный wall-clock.
     await session.execute(
         text(
             "UPDATE sync_run "
-            "SET status=:status, finished_at=now(), stats=CAST(:stats AS jsonb), error=:err "
+            "SET status=:status, finished_at=clock_timestamp(), "
+            "    stats=CAST(:stats AS jsonb), error=:err "
             "WHERE id=:rid"
         ),
         {
