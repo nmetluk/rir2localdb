@@ -25,7 +25,17 @@
 - [x] Спецификации, ADR, скелет репозитория, каталог источников
   `src/rir2localdb/sources.py`, документация (`docs/`, 10 файлов + 5 ADR).
 
-**Stage 1: Core sync + minimal API — в работе. Шаги 1–7 закрыты.**
+**Stage 1: Core sync + minimal API — ЗАКРЫТ ✅ (2026-05-18).**
+
+DoD достигнут: `curl /v1/ip/8.8.8.8` → ARIN/US, `2001:4860:4860::8888`
+→ ARIN/US, `AS15169` → ARIN/US после `rir2localdb sync --tier core`.
+Подробный итог — `.claude/session-log/01-99-stage-1-closed.md`.
+
+**Цифры:** 27 модулей в `src/rir2localdb/`, 2771 строка кода,
+67 unit + 1 integration тестов, 6 ADR, 51 коммит после bootstrap.
+Live sync: 760k записей, 647k IP allocation + 113k ASN, ~102 секунды.
+
+**Stage 1 — детали по шагам (для исторической справки):**
 
 Сделано в текущей сессии (2026-05-17):
 
@@ -84,6 +94,23 @@
   `"00000000"` → `None`. 17 тестов: 5 параметризованных RIR-фрагментов
   + 12 edge cases. Детали:
   `.claude/session-log/01-05-parsers-delegated.md`.
+- [x] **Шаг 8 — FastAPI `/v1/*`** (commits `3a296e9`..`8cbaa90`):
+  - `api/app.py` — `make_app(settings)` фабрика с lifespan'ом
+    (создаёт engine + sessionmaker на startup, dispose на shutdown).
+    Корень `/` отдаёт JSON-манифест.
+  - `api/schemas.py` — 4 Pydantic-модели (плоские, без обёрток).
+  - `api/routers/ip.py` — `/v1/ip/{addr}` через `ipaddress.ip_address`,
+    IPv6 как `Decimal(int(ip))` → numeric, `ORDER BY upper-lower ASC
+    LIMIT 1` для самой узкой записи.
+  - `api/routers/asn.py` — `/v1/asn/{num}`, валидация 0..2^32-1.
+  - `api/routers/meta.py` — `/v1/healthz` (без БД) + `/v1/status`
+    (последний sync_run + sync_file + db_alive).
+  - `cli.serve --host --port` — uvicorn-runner с lazy import.
+  - 12 ASGI-smoke-тестов через `httpx.ASGITransport` + `clean_db`.
+  - **По дороге**: fix парсера для NRO «2.3» version-header
+    (APNIC/ARIN/LACNIC перешли с «2»). `clean_db` фикстура перенесена
+    в conftest.py для shared usage.
+  - Детали: `.claude/session-log/01-08-fastapi.md`.
 - [x] **Шаг 7 — `sync/orchestrator.py` + CLI** (двухходовой):
   - 7a (skeleton, `dd49def`+`6ebab2a`+`874a815`+`8eb418a`):
     `SyncRunSummary` + `run_sync` контракт, 4 typer-команды
@@ -137,38 +164,41 @@
   - YAML fix в notify-session-log: `grep -v _template`.
   - Детали: `.claude/session-log/01-04-sync-state.md`.
 
-Не сделано (ждёт следующих шагов Stage 1):
+Не сделано (follow-up'ы / Stage 2+):
 
-- [ ] FastAPI `/v1/ip` / `/v1/asn` / `/v1/status` / `/v1/healthz` (шаг 8) —
-  последний шаг stage 1.
-- [ ] CI workflow (после шага 8).
+- [ ] CI workflow (`.github/workflows/ci.yml`) — ruff + mypy + pytest +
+  alembic round-trip. Простой single-workflow на ~10 минут;
+  отдельный follow-up до старта Stage 2.
+- [ ] Stage 2: RPSL rich-tier (см. `docs/08-roadmap.md` § Stage 2).
 
 ---
 
 ## Что делать дальше (Stage 1)
 
-Подробный список — `docs/08-roadmap.md` раздел «Stage 1». Кратко
-(шаги 1–7 закрыты; актуальный ближайший — №8, финал stage 1):
+**Stage 1 закрыт.** Дальше — два возможных направления:
 
-1. ~~`alembic init` + миграция `0001_initial`.~~ ✅
-2. ~~Таблицы `sync_run`, `sync_file`, `ip_allocation`, `asn_allocation`.~~ ✅
-3. ~~`sync/fetcher.py` — реализация + 10 тестов через MockTransport.~~ ✅
-4. ~~`sync/state.py` — CRUD над `sync_file`, 10 тестов.~~ ✅
-5. ~~`parsers/delegated.py` — NRO pipe-format iterator, 17 тестов.~~ ✅
-6. ~~`etl/delegated_etl.py` — staging COPY + ON CONFLICT UPSERT, 13 тестов.~~ ✅
-7. ~~`sync/orchestrator.py` + CLI — full orchestration, 5 unit-тестов +
-   live RIPE smoke.~~ ✅
-8. **FastAPI** — последний шаг stage 1:
-   - `api/app.py` — FastAPI с lifespan, `AsyncEngine`-фабрика.
-   - Роутеры: `GET /v1/ip/{addr}`, `GET /v1/asn/{num}`,
-     `GET /v1/status`, `GET /v1/healthz`.
-   - Lookup через сырой SQL: `range_v4 @> $1::int8` / `range_v6 @>
-     ...::numeric`, `ORDER BY upper-lower ASC LIMIT 1` для самого
-     специфичного.
-   - `tests/test_api_smoke.py` через `httpx.AsyncClient(transport=ASGITransport(app))`,
-     с pre-populated данными через `clean_db`-like фикстуру.
-   - **DoD stage 1:** `curl /v1/ip/8.8.8.8` отвечает корректным JSON
-     после `rir2localdb sync --tier core`.
+**A. CI workflow** (короткий follow-up, ~10 минут):
+- `.github/workflows/ci.yml`: setup Postgres сервис, `pip install -e .[dev]`,
+  `ruff check`, `mypy`, `pytest -m "not integration"`.
+- Опционально alembic round-trip как отдельный job.
+- Триггер на push + PR в main.
+
+**B. Stage 2 — RPSL rich-tier** (см. `docs/08-roadmap.md` § Stage 2):
+- Парсер RPSL (общий для RIPE / APNIC / AFRINIC).
+- Per-RIR таблицы: `inetnum` / `inet6num` / `aut-num` /
+  `organisation` / `route(6)` / `as-block`.
+- ETL для split-дампов, gzip-стриминг (RIPE inet6num ~36 МБ gzip,
+  ~500MB развёрнутый — потоковая обработка обязательна).
+- Расширение API: поле `rpsl` в ответах `/ip` и `/asn` с
+  netname / org_name / mnt-by / abuse-c.
+- Опциональный ARIN Bulk Whois коннектор (под env-ключ).
+- LACNIC RDAP-fallback.
+
+Рекомендация: сначала A (CI) — закрывает регрессионную защиту перед
+большим Stage 2. Потом B.
+
+**DoD Stage 2:** `curl /v1/ip/193.0.6.139` возвращает
+`rpsl.inetnum.netname` и `rpsl.organisation.org_name`.
 
 **Definition of Done для Stage 1:** на чистой машине проходит сценарий
 быстрого старта из `README.md`, `curl http://localhost:8000/v1/ip/8.8.8.8`
@@ -242,9 +272,11 @@ rir2localdb/
 │   ├── etl/delegated_etl.py            ← реализован (шаг 6)
 │   ├── etl/rpsl_etl.py                 ← TODO-стаб (Stage 2)
 │   ├── sync/orchestrator.py            ← реализован (шаг 7)
-│   ├── cli.py                          ← реализован (шаг 7)
+│   ├── cli.py                          ← реализован (шаги 7+8, 5 команд)
 │   ├── logging_setup.py                ← реализован (шаг 7, plain text)
-│   ├── api/                            ← TODO-стабы, шаг 8
+│   ├── api/app.py                      ← реализован (шаг 8)
+│   ├── api/schemas.py                  ← реализован (шаг 8)
+│   └── api/routers/{ip,asn,meta}.py    ← реализованы (шаг 8)
 ├── alembic.ini                         ← конфиг Alembic (URL берётся из env)
 ├── migrations/                         ← Alembic, async-template
 │   ├── env.py                          ← интегрирован с config.Settings
