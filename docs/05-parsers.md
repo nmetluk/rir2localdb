@@ -170,6 +170,12 @@ inetnum:        193.0.8.0 - 193.0.15.255
 - **Размер**: RIPE `ripe.db.inetnum.utf8.gz` ~50 MB gzip, ~700 MB
   uncompressed; AFRINIC `afrinic.db.gz` ~30 MB / ~400 MB. Парсер
   потоковый, O(размер одного объекта) по памяти.
+- **ARIN IRR quirk:** prefixes are published with zero-padded octets
+  (`069.031.132.000/23`). The RPSL ETL pre-canonicalizes them via
+  `_canonicalize_v4_prefix()` in `etl/rpsl_etl.py` before passing to
+  `ipaddress.IPv4Network`, which would otherwise reject non-RFC-3986
+  forms. IPv6 prefixes do not need this normalization — `IPv6Network`
+  accepts both `2001:0db8::/32` and `2001:db8::/32`.
 
 ### Скелет парсера
 
