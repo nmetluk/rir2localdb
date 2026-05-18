@@ -22,17 +22,32 @@
 # 1. Поднять PostgreSQL локально
 docker compose up -d postgres
 
-# 2. Установить зависимости
+# 2. Установить зависимости (рекомендуется venv)
 pip install -e ".[dev]"
 
-# 3. Накатить миграции
-alembic upgrade head
+# 3. Скопировать .env.example → .env и поправить DATABASE_URL под локальную PG
+cp .env.example .env
 
-# 4. Запустить первичную синхронизацию (только delegated stats — быстро, ~30 сек)
+# 4. Накатить миграции
+rir2localdb migrate
+
+# 5. Первичная синхронизация (5 RIR'ов, ~100 секунд, ~750k записей)
 rir2localdb sync --tier core
 
-# 5. Запустить API
-rir2localdb api  # http://localhost:8000/docs
+# 6. Посмотреть статус
+rir2localdb status
+
+# 7. Запустить HTTP API
+rir2localdb serve &
+
+# 8. Запросить allocation по IP / ASN
+curl -s http://127.0.0.1:8000/v1/ip/8.8.8.8 | python -m json.tool
+curl -s http://127.0.0.1:8000/v1/ip/2001:4860:4860::8888 | python -m json.tool
+curl -s http://127.0.0.1:8000/v1/asn/15169 | python -m json.tool
+curl -s http://127.0.0.1:8000/v1/status | python -m json.tool
+
+# OpenAPI docs:
+# http://127.0.0.1:8000/docs
 ```
 
 ## Документация
