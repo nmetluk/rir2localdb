@@ -101,6 +101,43 @@ RIR режет HTTPS быстрее, чем FTP. Спойлер: не режет
 - Если на Stage 3 нужно ускорить — параллелим разные RIR-ы,
   потому что они независимы и пишут в разные таблицы.
 
+## ETL-слой
+
+Между парсером и БД сидит `etl/`. Два модуля:
+
+### `etl/delegated_etl.py` (Stage 1)
+
+`apply_delegated_etl(conn, records, run_id) -> EtlStats`. Стрим
+`DelegatedRecord` → две таблицы (`ip_allocation` / `asn_allocation`)
+через одну staging-таблицу на семейство. Буферизация всех записей в
+памяти приемлема — типичный delegated-файл ~50k строк, ~10 МБ.
+
+### `etl/rpsl_etl.py` (Stage 2)
+
+`apply_rpsl_etl(conn, objects, rir, run_id) -> RpslEtlStats`. Стрим
+`RpslObject` → восемь таблиц (`inetnum`, `inet6num`, `aut_num`,
+`organisation`, `route`, `route6`, `as_block`, `role`).
+
+- **Dispatcher по первому ключу.** `obj_type = next(iter(obj))` →
+  выбор маппера. Типы вне 8 целевых (`mntner`, `person`, `as-set`, ...)
+  считаются в `objects_skipped_unknown_type` и пропускаются.
+- **Batched COPY.** Файл `ripe.db.inetnum.gz` — ~5M объектов;
+  буферизовать всё в RAM нельзя. ETL держит 8 батч-буферов по
+  таблицам (`_BATCH_SIZE = 10_000`); при заполнении любого — `COPY
+  staging_<table>` + reset. После исчерпания итератора — финальный
+  flush + 8 UPSERT'ов в фиксированном порядке (`organisation → role →
+  inetnum → inet6num → aut_num → route → route6 → as_block`).
+- **Multi-origin route.** PK включает `origin`, поэтому RPSL-объект
+  `route` с N `origin:` строками даёт N строк в SQL (раздельный
+  edge-case в API — JOIN по `(rir, prefix)` без `origin`).
+- **first_seen_run / last_seen_run / stale records** — идентично
+  `delegated_etl` (preserve `first_seen_run` на UPDATE; stale GC
+  отложено в Stage 3).
+
+См. ADR-0007 для обоснования «одна таблица на тип, не per-(rir,type)»
+и docstring `src/rir2localdb/etl/rpsl_etl.py` для конкретики
+edge-кейсов мапперов.
+
 ## Расширяемость
 
 Добавить новый источник (например, `apnic.db.role.gz`) — это:
