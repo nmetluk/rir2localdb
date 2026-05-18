@@ -61,6 +61,24 @@ def _aut_num(asn_value: str, **fields: Any) -> RpslObject:
     return out
 
 
+def _mntner(mntner: str, **fields: Any) -> RpslObject:
+    out: RpslObject = {"mntner": [mntner]}
+    _merge(out, fields)
+    return out
+
+
+def _person(nic_hdl: str, **fields: Any) -> RpslObject:
+    out: RpslObject = {"person": [fields.pop("person", "Dummy Person")], "nic-hdl": [nic_hdl]}
+    _merge(out, fields)
+    return out
+
+
+def _as_set(as_set: str, **fields: Any) -> RpslObject:
+    out: RpslObject = {"as-set": [as_set]}
+    _merge(out, fields)
+    return out
+
+
 def _merge(obj: RpslObject, fields: dict[str, Any]) -> None:
     for k, v in fields.items():
         key = k.replace("_", "-")
@@ -73,7 +91,7 @@ def _merge(obj: RpslObject, fields: dict[str, Any]) -> None:
 
 
 async def test_empty_input_no_changes(pg_conn: asyncpg.Connection, pg_sync_run_id: int) -> None:
-    stats = await apply_rpsl_etl(pg_conn, [], rir="ripe", run_id=pg_sync_run_id)
+    stats = await apply_rpsl_etl(pg_conn, [], rir="ripencc", run_id=pg_sync_run_id)
 
     assert isinstance(stats, RpslEtlStats)
     assert stats.objects_seen == 0
@@ -106,12 +124,12 @@ async def test_inetnum_single_object(pg_conn: asyncpg.Connection, pg_sync_run_id
         source="RIPE",
     )
 
-    stats = await apply_rpsl_etl(pg_conn, [obj], rir="ripe", run_id=pg_sync_run_id)
+    stats = await apply_rpsl_etl(pg_conn, [obj], rir="ripencc", run_id=pg_sync_run_id)
 
     rows = await pg_conn.fetch("SELECT * FROM inetnum")
     assert len(rows) == 1
     row = rows[0]
-    assert row["rir"] == "ripe"
+    assert row["rir"] == "ripencc"
     assert str(row["start_text"]) == "193.0.0.0"
     assert row["value"] == 256
     start_int = int(ipaddress.IPv4Address("193.0.0.0"))
@@ -146,7 +164,7 @@ async def test_inetnum_single_object(pg_conn: asyncpg.Connection, pg_sync_run_id
 async def test_inet6num_cidr(pg_conn: asyncpg.Connection, pg_sync_run_id: int) -> None:
     obj = _inet6num("2001:db8::/32", source="RIPE")
 
-    await apply_rpsl_etl(pg_conn, [obj], rir="ripe", run_id=pg_sync_run_id)
+    await apply_rpsl_etl(pg_conn, [obj], rir="ripencc", run_id=pg_sync_run_id)
 
     row = await pg_conn.fetchrow("SELECT * FROM inet6num")
     assert row is not None
@@ -165,7 +183,7 @@ async def test_inet6num_cidr(pg_conn: asyncpg.Connection, pg_sync_run_id: int) -
 async def test_aut_num_basic(pg_conn: asyncpg.Connection, pg_sync_run_id: int) -> None:
     obj = _aut_num("AS3333", as_name="RIPE-NCC-AS", source="RIPE")
 
-    await apply_rpsl_etl(pg_conn, [obj], rir="ripe", run_id=pg_sync_run_id)
+    await apply_rpsl_etl(pg_conn, [obj], rir="ripencc", run_id=pg_sync_run_id)
 
     row = await pg_conn.fetchrow("SELECT * FROM aut_num")
     assert row is not None
@@ -190,7 +208,7 @@ async def test_mixed_object_types(pg_conn: asyncpg.Connection, pg_sync_run_id: i
         _obj(("as-block", "AS1 - AS1876")),
     ]
 
-    stats = await apply_rpsl_etl(pg_conn, objects, rir="ripe", run_id=pg_sync_run_id)
+    stats = await apply_rpsl_etl(pg_conn, objects, rir="ripencc", run_id=pg_sync_run_id)
 
     assert stats.objects_seen == 8
     assert stats.objects_by_type == {
@@ -232,7 +250,7 @@ async def test_route_multi_origin_yields_multiple_rows(
         ("origin", ["AS3333", "AS12345", "AS65000"]),
     )
 
-    stats = await apply_rpsl_etl(pg_conn, [obj], rir="ripe", run_id=pg_sync_run_id)
+    stats = await apply_rpsl_etl(pg_conn, [obj], rir="ripencc", run_id=pg_sync_run_id)
 
     rows = await pg_conn.fetch("SELECT * FROM route ORDER BY origin")
     assert len(rows) == 3
@@ -251,7 +269,7 @@ async def test_route6_multi_origin(pg_conn: asyncpg.Connection, pg_sync_run_id: 
         ("origin", ["AS3333", "AS12345"]),
     )
 
-    await apply_rpsl_etl(pg_conn, [obj], rir="ripe", run_id=pg_sync_run_id)
+    await apply_rpsl_etl(pg_conn, [obj], rir="ripencc", run_id=pg_sync_run_id)
 
     rows = await pg_conn.fetch("SELECT * FROM route6 ORDER BY origin")
     assert len(rows) == 2
@@ -265,13 +283,15 @@ async def test_route6_multi_origin(pg_conn: asyncpg.Connection, pg_sync_run_id: 
 async def test_unknown_type_counted_and_skipped(
     pg_conn: asyncpg.Connection, pg_sync_run_id: int
 ) -> None:
+    # Stage 2.50: mntner / person / as-set теперь покрыты. Используем
+    # RPSL-типы, которые мы (пока) не загружаем: key-cert, domain, irt.
     objects = [
-        _obj(("mntner", "RIPE-NCC-MNT")),
-        _obj(("person", "John Doe"), ("nic-hdl", "JD1-RIPE")),
-        _obj(("as-set", "AS-RIPE")),
+        _obj(("key-cert", "PGPKEY-DEADBEEF")),
+        _obj(("domain", "0.193.in-addr.arpa")),
+        _obj(("irt", "IRT-TEST")),
     ]
 
-    stats = await apply_rpsl_etl(pg_conn, objects, rir="ripe", run_id=pg_sync_run_id)
+    stats = await apply_rpsl_etl(pg_conn, objects, rir="ripencc", run_id=pg_sync_run_id)
 
     assert stats.objects_seen == 3
     assert stats.objects_skipped_unknown_type == 3
@@ -294,7 +314,7 @@ async def test_malformed_inetnum_skipped(pg_conn: asyncpg.Connection, pg_sync_ru
         _obj(("inetnum", "193.0.0.0")),  # без " - "
     ]
 
-    stats = await apply_rpsl_etl(pg_conn, objects, rir="ripe", run_id=pg_sync_run_id)
+    stats = await apply_rpsl_etl(pg_conn, objects, rir="ripencc", run_id=pg_sync_run_id)
 
     assert stats.objects_seen == 3
     assert stats.objects_skipped_malformed == 3
@@ -312,7 +332,7 @@ async def test_malformed_aut_num_too_large(
 ) -> None:
     obj = _aut_num("AS9999999999")
 
-    stats = await apply_rpsl_etl(pg_conn, [obj], rir="ripe", run_id=pg_sync_run_id)
+    stats = await apply_rpsl_etl(pg_conn, [obj], rir="ripencc", run_id=pg_sync_run_id)
 
     assert stats.objects_skipped_malformed == 1
     count = await pg_conn.fetchval("SELECT COUNT(*) FROM aut_num")
@@ -327,7 +347,7 @@ async def test_malformed_aut_num_too_large(
 async def test_inet6num_non_cidr_skipped(pg_conn: asyncpg.Connection, pg_sync_run_id: int) -> None:
     obj = _inet6num("2001:db8:: - 2001:db8:ffff::")
 
-    stats = await apply_rpsl_etl(pg_conn, [obj], rir="ripe", run_id=pg_sync_run_id)
+    stats = await apply_rpsl_etl(pg_conn, [obj], rir="ripencc", run_id=pg_sync_run_id)
 
     assert stats.objects_skipped_malformed == 1
     count = await pg_conn.fetchval("SELECT COUNT(*) FROM inet6num")
@@ -349,7 +369,7 @@ async def test_datetime_parse_success_and_failure(
         last_modified="definitely-not-a-date",
     )
 
-    await apply_rpsl_etl(pg_conn, [obj], rir="ripe", run_id=pg_sync_run_id)
+    await apply_rpsl_etl(pg_conn, [obj], rir="ripencc", run_id=pg_sync_run_id)
 
     row = await pg_conn.fetchrow("SELECT created, last_modified FROM inetnum")
     assert row is not None
@@ -369,7 +389,7 @@ async def test_empty_array_fields_stored_as_null(
     obj = _inetnum("193.0.0.0", "193.0.0.255", source="RIPE")
     # никаких admin-c / tech-c / mnt-by
 
-    await apply_rpsl_etl(pg_conn, [obj], rir="ripe", run_id=pg_sync_run_id)
+    await apply_rpsl_etl(pg_conn, [obj], rir="ripencc", run_id=pg_sync_run_id)
 
     row = await pg_conn.fetchrow("SELECT admin_c, tech_c, mnt_by FROM inetnum")
     assert row is not None
@@ -393,7 +413,7 @@ async def test_raw_jsonb_preserves_full_object(
         ("source", "RIPE"),
     )
 
-    await apply_rpsl_etl(pg_conn, [obj], rir="ripe", run_id=pg_sync_run_id)
+    await apply_rpsl_etl(pg_conn, [obj], rir="ripencc", run_id=pg_sync_run_id)
 
     raw = await pg_conn.fetchval("SELECT raw FROM inetnum")
     assert raw == obj
@@ -409,7 +429,7 @@ async def test_rerun_updates_last_seen_keeps_first_seen(
 ) -> None:
     obj = _inetnum("193.0.0.0", "193.0.0.255", source="RIPE")
 
-    stats1 = await apply_rpsl_etl(pg_conn, [obj], rir="ripe", run_id=pg_sync_run_id)
+    stats1 = await apply_rpsl_etl(pg_conn, [obj], rir="ripencc", run_id=pg_sync_run_id)
     assert stats1.upsert_inserted["inetnum"] == 1
     assert stats1.upsert_updated.get("inetnum", 0) == 0
 
@@ -418,7 +438,7 @@ async def test_rerun_updates_last_seen_keeps_first_seen(
     )
     rid2 = int(rid2_raw)
 
-    stats2 = await apply_rpsl_etl(pg_conn, [obj], rir="ripe", run_id=rid2)
+    stats2 = await apply_rpsl_etl(pg_conn, [obj], rir="ripencc", run_id=rid2)
     assert stats2.upsert_inserted.get("inetnum", 0) == 0
     assert stats2.upsert_updated["inetnum"] == 1
 
@@ -462,17 +482,17 @@ async def test_stats_counts_seen_unknown_malformed_separately(
 ) -> None:
     objects = [
         _inetnum("193.0.0.0", "193.0.0.255"),  # valid
-        _obj(("mntner", "FOO-MNT")),  # unknown type
+        _obj(("key-cert", "PGPKEY-FOO")),  # unknown type (post-2.50)
         _inetnum("not-an-ip", "also-not"),  # malformed
         _inetnum("10.0.0.0", "10.0.0.255"),  # valid #2
     ]
 
-    stats = await apply_rpsl_etl(pg_conn, objects, rir="ripe", run_id=pg_sync_run_id)
+    stats = await apply_rpsl_etl(pg_conn, objects, rir="ripencc", run_id=pg_sync_run_id)
 
     assert stats.objects_seen == 4
     assert stats.objects_skipped_unknown_type == 1
     assert stats.objects_skipped_malformed == 1
-    assert stats.objects_by_type == {"inetnum": 3, "mntner": 1}
+    assert stats.objects_by_type == {"inetnum": 3, "key-cert": 1}
     assert stats.upsert_inserted["inetnum"] == 2
 
 
@@ -506,3 +526,94 @@ async def test_route_arin_zero_padded_prefix_normalized(
     assert row is not None
     assert row["prefix"] == "69.31.132.0/23"
     assert row["origin"] == "AS65000"
+
+
+# ---------------------------------------------------------------------------
+# Stage 2.50 § A: mntner / person / as_set coverage.
+# ---------------------------------------------------------------------------
+
+
+async def test_mntner_inserted(pg_conn: asyncpg.Connection, pg_sync_run_id: int) -> None:
+    obj = _mntner("TEST-MNT", admin_c=["A-RIPE"], mnt_by=["TEST-MNT"], source="RIPE")
+    stats = await apply_rpsl_etl(pg_conn, iter([obj]), rir="ripencc", run_id=pg_sync_run_id)
+    assert stats.upsert_inserted.get("mntner", 0) == 1
+    row = await pg_conn.fetchrow("SELECT mntner, admin_c, mnt_by FROM mntner WHERE rir='ripencc'")
+    assert row is not None
+    assert row["mntner"] == "TEST-MNT"
+    assert row["admin_c"] == ["A-RIPE"]
+    assert row["mnt_by"] == ["TEST-MNT"]
+
+
+async def test_person_inserted_resolves_admin_c_reference(
+    pg_conn: asyncpg.Connection, pg_sync_run_id: int
+) -> None:
+    """Demo: после загрузки person объект больше не висит orphan
+    для admin_c='DUMY-RIPE' в inetnum."""
+    person_obj = _person(
+        nic_hdl="DUMY-RIPE",
+        person="Dummy Person",
+        email=["d@x.test"],
+    )
+    inetnum_obj = _inetnum(
+        "10.0.0.0",
+        "10.0.0.255",
+        admin_c=["DUMY-RIPE"],
+    )
+    stats = await apply_rpsl_etl(
+        pg_conn, iter([person_obj, inetnum_obj]), rir="ripencc", run_id=pg_sync_run_id
+    )
+    assert stats.upsert_inserted.get("person", 0) == 1
+    assert stats.upsert_inserted.get("inetnum", 0) == 1
+
+    p = await pg_conn.fetchrow("SELECT person, email FROM person WHERE nic_hdl='DUMY-RIPE'")
+    assert p is not None
+    assert p["person"] == "Dummy Person"
+    assert p["email"] == ["d@x.test"]
+
+
+async def test_as_set_inserted_with_members(
+    pg_conn: asyncpg.Connection, pg_sync_run_id: int
+) -> None:
+    obj = _as_set("AS-TEST", members=["AS100", "AS200", "AS-OTHER"], source="RIPE")
+    stats = await apply_rpsl_etl(pg_conn, iter([obj]), rir="ripencc", run_id=pg_sync_run_id)
+    assert stats.upsert_inserted.get("as_set", 0) == 1
+    row = await pg_conn.fetchrow(
+        "SELECT members FROM as_set WHERE rir='ripencc' AND as_set='AS-TEST'"
+    )
+    assert row is not None
+    assert row["members"] == ["AS100", "AS200", "AS-OTHER"]
+
+
+async def test_three_types_no_longer_skipped_as_unknown(
+    pg_conn: asyncpg.Connection, pg_sync_run_id: int
+) -> None:
+    """До Stage 2.50: 3 объекта → 3 skipped_unknown.
+    После: 3 объекта → 3 inserted, 0 unknown."""
+    objs = [
+        _mntner("M1"),
+        _person("P1"),
+        _as_set("AS-S1"),
+    ]
+    stats = await apply_rpsl_etl(pg_conn, iter(objs), rir="ripencc", run_id=pg_sync_run_id)
+    assert stats.objects_skipped_unknown_type == 0
+    assert stats.upsert_inserted.get("mntner", 0) == 1
+    assert stats.upsert_inserted.get("person", 0) == 1
+    assert stats.upsert_inserted.get("as_set", 0) == 1
+
+
+# ---------------------------------------------------------------------------
+# Stage 2.50 § B: rir normalization sanity check.
+# ---------------------------------------------------------------------------
+
+
+async def test_rir_is_canonical_ripencc_after_apply(
+    pg_conn: asyncpg.Connection, pg_sync_run_id: int
+) -> None:
+    """Apply_rpsl_etl сохраняет ``rir`` параметр as-is. После Rir.RIPE
+    normalization (Stage 2.50 § B) orchestrator передаёт ``"ripencc"``.
+    Тест фиксирует, что значение не магически меняется в ETL."""
+    obj = _inetnum("193.0.0.0", "193.0.0.255", source="RIPE")
+    await apply_rpsl_etl(pg_conn, iter([obj]), rir="ripencc", run_id=pg_sync_run_id)
+    row = await pg_conn.fetchrow("SELECT rir FROM inetnum LIMIT 1")
+    assert row is not None
+    assert row["rir"] == "ripencc"
