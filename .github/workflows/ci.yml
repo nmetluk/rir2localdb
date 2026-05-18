@@ -56,6 +56,26 @@ jobs:
       - name: mypy
         run: mypy src/ tests/
 
+      - name: lint systemd units
+        run: |
+          # systemd-analyze verify — статический syntax check unit-файлов.
+          # Подставляем dummy User=root и убираем ConditionPathExists,
+          # потому что на CI runner'е rir2local юзера нет и venv не
+          # существует — иначе verify падает.
+          mkdir -p /tmp/systemd-lint
+          sed -e 's/^User=.*/User=root/' \
+              -e 's/^Group=.*/Group=root/' \
+              -e '/^ConditionPathExists=/d' \
+              -e 's|^WorkingDirectory=.*|WorkingDirectory=/tmp|' \
+              -e 's|^ExecStart=.*|ExecStart=/bin/true|' \
+              -e 's|^ReadWritePaths=.*|ReadWritePaths=/tmp|' \
+              deploy/systemd/rir2localdb-sync.service \
+              > /tmp/systemd-lint/rir2localdb-sync.service
+          cp deploy/systemd/rir2localdb-sync.timer /tmp/systemd-lint/
+          systemd-analyze verify \
+            /tmp/systemd-lint/rir2localdb-sync.service \
+            /tmp/systemd-lint/rir2localdb-sync.timer
+
       - name: alembic round-trip
         run: |
           alembic upgrade head
