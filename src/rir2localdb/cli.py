@@ -148,6 +148,17 @@ def _print_summary(summary: SyncRunSummary, *, dry_run: bool) -> None:
     typer.echo(f"  parser: records_total={summary.parser_records_total}")
     typer.echo(f"  etl ip:  inserted={summary.etl_ip_inserted} updated={summary.etl_ip_updated}")
     typer.echo(f"  etl asn: inserted={summary.etl_asn_inserted} updated={summary.etl_asn_updated}")
+    if summary.etl_rpsl_records_total > 0:
+        typer.echo(
+            f"  etl rpsl: records={summary.etl_rpsl_records_total} "
+            f"unknown_type={summary.etl_rpsl_unknown_type_skipped} "
+            f"malformed={summary.etl_rpsl_malformed_skipped}"
+        )
+        for tbl, counts in sorted(summary.etl_rpsl_by_type.items()):
+            typer.echo(
+                f"           {tbl}: inserted={counts.get('inserted', 0)} "
+                f"updated={counts.get('updated', 0)}"
+            )
     typer.echo(f"  duration: {summary.duration_ms} ms")
     if summary.error:
         typer.echo(f"  error: {summary.error}", err=True)
@@ -161,8 +172,8 @@ async def _print_status(settings: Settings) -> None:
             runs = (
                 await conn.execute(
                     text(
-                        "SELECT id, tier, started_at, finished_at, status, error "
-                        "FROM sync_run ORDER BY id DESC LIMIT 5"
+                        "SELECT id, tier, started_at, finished_at, status, error, "
+                        "stats FROM sync_run ORDER BY id DESC LIMIT 5"
                     )
                 )
             ).all()
@@ -180,15 +191,17 @@ async def _print_status(settings: Settings) -> None:
     console = Console()
 
     runs_table = Table(title="Recent sync_run (last 5)")
-    for col in ("ID", "Tier", "Started", "Finished", "Status", "Error"):
+    for col in ("ID", "Tier", "Started", "Finished", "Status", "RPSL records", "Error"):
         runs_table.add_column(col)
     for row in runs:
+        rpsl_total = _rpsl_records_from_stats(row.stats)
         runs_table.add_row(
             str(row.id),
             row.tier,
             _fmt_dt(row.started_at),
             _fmt_dt(row.finished_at),
             row.status,
+            "" if rpsl_total is None else str(rpsl_total),
             (row.error or "")[:60],
         )
     console.print(runs_table)
@@ -212,3 +225,18 @@ def _fmt_dt(value: object) -> str:
     if value is None:
         return ""
     return str(value)
+
+
+def _rpsl_records_from_stats(stats: object) -> int | None:
+    """Достать ``etl_rpsl_records_total`` из JSONB stats.
+
+    Postgres+asyncpg возвращают JSONB как ``dict``, но если в строке
+    нет stats (старые run'ы до Stage 2-05) или поле отсутствует —
+    возвращаем ``None``, чтобы CLI показал пустую ячейку.
+    """
+    if not isinstance(stats, dict):
+        return None
+    value = stats.get("etl_rpsl_records_total")
+    if not isinstance(value, int) or value == 0:
+        return None
+    return value
