@@ -100,7 +100,8 @@ async def test_three_ipv4_records_inserted_with_correct_ranges(
     assert rows[0]["hi"] == r0_start + 16777216
     assert rows[0]["ip"] == "8.0.0.0"
     assert rows[0]["value"] == 16777216
-    assert rows[0]["prefix_length"] is None
+    # value=16777216 — степень двойки (2^24), CIDR-aligned → /8.
+    assert rows[0]["prefix_length"] == 8
     assert rows[0]["range_v6"] is None
 
 
@@ -292,6 +293,42 @@ async def test_unaligned_ipv4_value_preserved(
     )
     assert row["sz"] == 20480
     assert row["value"] == 20480
+
+
+async def test_ipv4_cidr_aligned_sets_prefix_length(
+    pg_conn: asyncpg.Connection,
+    pg_sync_run_id: int,
+) -> None:
+    """value — степень двойки → ETL вычисляет prefix_length."""
+    records = [
+        _make_record("ipv4", "8.0.0.0", 16777216, cc="US"),  # /8
+        _make_record("ipv4", "2.0.0.0", 65536, cc="FR"),  # /16
+        _make_record("ipv4", "10.0.0.0", 256, cc="JP"),  # /24
+    ]
+    await apply_delegated_etl(pg_conn, records, pg_sync_run_id)
+    rows = await pg_conn.fetch(
+        "SELECT value, prefix_length FROM ip_allocation ORDER BY value DESC"
+    )
+    assert len(rows) == 3
+    assert rows[0]["value"] == 16777216 and rows[0]["prefix_length"] == 8
+    assert rows[1]["value"] == 65536 and rows[1]["prefix_length"] == 16
+    assert rows[2]["value"] == 256 and rows[2]["prefix_length"] == 24
+
+
+async def test_ipv4_unaligned_keeps_prefix_length_none(
+    pg_conn: asyncpg.Connection,
+    pg_sync_run_id: int,
+) -> None:
+    """value не степень двойки → prefix_length остаётся None."""
+    await apply_delegated_etl(
+        pg_conn,
+        [_make_record("ipv4", "10.0.0.0", 20480, cc="JP")],  # объединение CIDR
+        pg_sync_run_id,
+    )
+    row = await pg_conn.fetchrow(
+        "SELECT prefix_length FROM ip_allocation WHERE value = 20480"
+    )
+    assert row["prefix_length"] is None
 
 
 async def test_gist_lookup_finds_inserted_row(

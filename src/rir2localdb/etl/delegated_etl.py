@@ -222,13 +222,21 @@ def _record_to_ip_row(rec: DelegatedRecord) -> tuple[Any, ...]:
     """
     if rec.type == "ipv4":
         start_int = _ipv4_to_int(rec.start)
+        # Если `value` — степень двойки, блок CIDR-выровнен и мы можем
+        # вычислить длину префикса. Для не-выровненных value (объединение
+        # нескольких CIDR в одну запись, типичный кейс APNIC) — None.
+        # Пример: value=256 (один /24) → bit_length=9 → 32-9+1 = 24.
+        if rec.value > 0 and (rec.value & (rec.value - 1)) == 0:
+            ipv4_prefix_length: int | None = 32 - rec.value.bit_length() + 1
+        else:
+            ipv4_prefix_length = None
         return (
             rec.registry,
             rec.cc,
             4,
             asyncpg.Range(start_int, start_int + rec.value),
             None,
-            None,
+            ipv4_prefix_length,
             rec.start,
             rec.value,
             rec.status,
