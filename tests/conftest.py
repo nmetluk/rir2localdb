@@ -41,6 +41,7 @@ import pytest
 import pytest_asyncio
 from alembic import command
 from alembic.config import Config
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -50,6 +51,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
+from rir2localdb.api.app import make_app
 from rir2localdb.config import Settings
 
 _ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
@@ -202,3 +204,34 @@ async def clean_db(
     finally:
         await conn.execute(truncate_sql)
         await conn.close()
+
+
+@pytest.fixture
+def api_settings(test_database_url: str, tmp_path: Path) -> Settings:
+    """``Settings`` для API-тестов — ``database_url`` смотрит на тестовую БД."""
+    return Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        database_url=test_database_url,
+        data_dir=tmp_path,
+        http_timeout=5.0,
+        http_max_connections=2,
+        http_retries=2,
+    )
+
+
+@pytest_asyncio.fixture
+async def api_client(api_settings: Settings) -> AsyncIterator[AsyncClient]:
+    """ASGI-клиент с поднятым lifespan'ом (startup → yield → shutdown).
+
+    Делит ``api_settings`` фикстуру; lifespan_context создаёт engine +
+    sessionmaker. Каждый тест получает свежее app instance, поэтому
+    Prometheus counters стартуют не с нуля (registry module-level) —
+    тесты на counter-инкременты должны это учитывать через дельты,
+    а не абсолютные значения.
+    """
+    app = make_app(api_settings)
+    async with (
+        app.router.lifespan_context(app),
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client,
+    ):
+        yield client
