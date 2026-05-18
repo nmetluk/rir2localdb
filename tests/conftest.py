@@ -195,7 +195,8 @@ async def clean_db(
     # появятся FK между ними.
     truncate_sql = (
         "TRUNCATE ip_allocation, asn_allocation, sync_file, sync_run, "
-        "inetnum, inet6num, aut_num, organisation, route, route6, as_block, role "
+        "inetnum, inet6num, aut_num, organisation, route, route6, as_block, role, "
+        "mntner, person, as_set, rdap_cache "
         "RESTART IDENTITY CASCADE"
     )
     try:
