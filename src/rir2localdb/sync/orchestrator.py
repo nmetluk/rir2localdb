@@ -57,10 +57,17 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from rir2localdb.config import Settings
 from rir2localdb.etl.delegated_etl import EtlStats, apply_delegated_etl
+from rir2localdb.etl.rpsl_etl import RpslEtlStats, apply_rpsl_etl
 from rir2localdb.parsers.delegated import parse_delegated
+from rir2localdb.parsers.rpsl import parse_rpsl
 from rir2localdb.sources import Format, Source, Tier, sources_for_tiers
 from rir2localdb.sync.fetcher import FetchStatus, fetch, make_http_client
 from rir2localdb.sync.state import mark_parsed, read_previous_state, write_result
+
+# Форматы, обрабатываемые RPSL парсером + ETL. Все три имеют один и
+# тот же текстовый формат внутри (RFC 2622 RPSL), различаются только
+# упаковкой / split'ингом по типам объектов.
+_RPSL_FORMATS: frozenset[Format] = frozenset({Format.RPSL, Format.RPSL_GZ, Format.RPSL_SPLIT_GZ})
 
 if TYPE_CHECKING:
     import asyncpg
@@ -75,14 +82,18 @@ logger = logging.getLogger(__name__)
 ADVISORY_LOCK_KEY: Final[int] = 0x7269723263616C64  # ASCII "rir2cald"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SyncRunSummary:
     """Итог одного sync-run'а.
 
     Собирается в ``run_sync``, возвращается CLI, в сериализованном
     виде кладётся в ``sync_run.stats`` (JSONB). Поля ``files_*``
     относятся к источникам; ``etl_*`` — к строкам в ip/asn-таблицах
-    суммарно за run.
+    и RPSL-таблицах суммарно за run.
+
+    ``kw_only=True`` — чтобы свободно добавлять опциональные поля с
+    дефолтами в любом порядке (default-after-non-default ordering
+    больше не валит __init__).
     """
 
     run_id: int
@@ -95,12 +106,21 @@ class SyncRunSummary:
     files_unchanged: int
     files_errored: int
     parser_records_total: int
-    """Сумма ``EtlStats.records_seen`` по всем источникам в run'е."""
+    """Сумма ``EtlStats.records_seen`` + ``RpslEtlStats.objects_seen``
+    по всем источникам run'а. Один общий счётчик для обзора."""
     etl_ip_inserted: int
     etl_ip_updated: int
     etl_asn_inserted: int
     etl_asn_updated: int
     duration_ms: int
+    # RPSL ETL (Stage 2). Дефолты — 0/пустой dict; если в run'е не
+    # было rpsl-источников, поля остаются нулевыми.
+    etl_rpsl_records_total: int = 0
+    etl_rpsl_unknown_type_skipped: int = 0
+    etl_rpsl_malformed_skipped: int = 0
+    etl_rpsl_by_type: dict[str, dict[str, int]] = field(default_factory=dict)
+    """``{"inetnum": {"inserted": N, "updated": M}, ...}``. Включает только
+    таблицы, в которые был хоть один upsert в этом run'е."""
     error: str | None = None
     """``None`` при ``status='success'``; человеко-читаемое сообщение
     при ``'failed'`` (lock contention, БД недоступна, и т.п.).
@@ -115,6 +135,7 @@ class _SourceOutcome:
     fetch_status: FetchStatus
     parser_records: int = 0
     etl: EtlStats = field(default_factory=EtlStats)
+    rpsl_etl: RpslEtlStats | None = None
 
 
 async def run_sync(
@@ -274,6 +295,10 @@ class _Counters:
     etl_ip_updated: int = 0
     etl_asn_inserted: int = 0
     etl_asn_updated: int = 0
+    etl_rpsl_records_total: int = 0
+    etl_rpsl_unknown_type_skipped: int = 0
+    etl_rpsl_malformed_skipped: int = 0
+    etl_rpsl_by_type: dict[str, dict[str, int]] = field(default_factory=dict)
 
     def add(self, outcome: _SourceOutcome) -> None:
         self.total_sources += 1
@@ -291,6 +316,17 @@ class _Counters:
         self.etl_ip_updated += outcome.etl.ip_updated
         self.etl_asn_inserted += outcome.etl.asn_inserted
         self.etl_asn_updated += outcome.etl.asn_updated
+        if outcome.rpsl_etl is not None:
+            r = outcome.rpsl_etl
+            self.etl_rpsl_records_total += r.objects_seen
+            self.etl_rpsl_unknown_type_skipped += r.objects_skipped_unknown_type
+            self.etl_rpsl_malformed_skipped += r.objects_skipped_malformed
+            for tbl, n in r.upsert_inserted.items():
+                self.etl_rpsl_by_type.setdefault(tbl, {"inserted": 0, "updated": 0})[
+                    "inserted"
+                ] += n
+            for tbl, n in r.upsert_updated.items():
+                self.etl_rpsl_by_type.setdefault(tbl, {"inserted": 0, "updated": 0})["updated"] += n
 
 
 async def _run_one_source(
@@ -315,21 +351,44 @@ async def _run_one_source(
     if result.status not in (FetchStatus.NEW, FetchStatus.UPDATED):
         return _SourceOutcome(fetch_status=result.status)
 
-    if result.local_path is None or source.format != Format.DELEGATED:
+    if result.local_path is None:
         # NEW/UPDATED без local_path — невозможно по контракту fetcher'а;
-        # форматы !=DELEGATED — Stage 2, сейчас не парсим.
+        # но проверка как safety net.
         return _SourceOutcome(fetch_status=result.status)
 
-    records = list(parse_delegated(result.local_path))
-    etl_stats = await apply_delegated_etl(raw_conn, records, run_id)
-    await mark_parsed(session, source.url, datetime.now(tz=UTC))
-    await session.flush()
+    if source.format == Format.DELEGATED:
+        records = list(parse_delegated(result.local_path))
+        etl_stats = await apply_delegated_etl(raw_conn, records, run_id)
+        await mark_parsed(session, source.url, datetime.now(tz=UTC))
+        await session.flush()
+        return _SourceOutcome(
+            fetch_status=result.status,
+            parser_records=len(records),
+            etl=etl_stats,
+        )
 
-    return _SourceOutcome(
-        fetch_status=result.status,
-        parser_records=len(records),
-        etl=etl_stats,
+    if source.format in _RPSL_FORMATS:
+        objects = parse_rpsl(result.local_path)
+        rpsl_stats = await apply_rpsl_etl(
+            raw_conn,
+            objects,
+            rir=source.rir.value,
+            run_id=run_id,
+        )
+        await mark_parsed(session, source.url, datetime.now(tz=UTC))
+        await session.flush()
+        return _SourceOutcome(
+            fetch_status=result.status,
+            parser_records=rpsl_stats.objects_seen,
+            rpsl_etl=rpsl_stats,
+        )
+
+    logger.warning(
+        "orchestrator: unsupported format %s for %s — skipping ETL",
+        source.format,
+        source.url,
     )
+    return _SourceOutcome(fetch_status=result.status)
 
 
 def _build_summary(
@@ -355,6 +414,10 @@ def _build_summary(
         etl_ip_updated=counters.etl_ip_updated,
         etl_asn_inserted=counters.etl_asn_inserted,
         etl_asn_updated=counters.etl_asn_updated,
+        etl_rpsl_records_total=counters.etl_rpsl_records_total,
+        etl_rpsl_unknown_type_skipped=counters.etl_rpsl_unknown_type_skipped,
+        etl_rpsl_malformed_skipped=counters.etl_rpsl_malformed_skipped,
+        etl_rpsl_by_type=dict(counters.etl_rpsl_by_type),
         duration_ms=int((time.perf_counter() - started) * 1000),
         error=error,
     )
