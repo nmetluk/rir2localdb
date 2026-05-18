@@ -10,7 +10,7 @@ Commands:
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
+import importlib.resources
 from typing import Annotated
 
 import alembic.command
@@ -122,15 +122,14 @@ def gc() -> None:
 def _alembic_config(settings: Settings) -> alembic.config.Config:
     """Собрать ``alembic.config.Config`` без файла ``alembic.ini``.
 
-    ``script_location`` резолвится через ``__file__`` относительно
-    repo root: ``src/rir2localdb/cli.py`` → ``parents[2]`` → repo
-    root → ``migrations/``. Этот путь работает для ``pip install -e .``;
-    wheel-packaging требует переключения на ``importlib.resources``
-    (см. CONTEXT.md, открытые вопросы).
+    ``script_location`` через ``importlib.resources.files("rir2localdb")``
+    — миграции лежат внутри пакета (`src/rir2localdb/migrations/`),
+    поэтому путь корректен и для ``pip install -e .``, и для
+    wheel-установки. CLI работает из любого cwd.
     """
-    repo_root = Path(__file__).resolve().parents[2]
+    migrations_dir = importlib.resources.files("rir2localdb").joinpath("migrations")
     cfg = alembic.config.Config()
-    cfg.set_main_option("script_location", str(repo_root / "migrations"))
+    cfg.set_main_option("script_location", str(migrations_dir))
     cfg.set_main_option("sqlalchemy.url", settings.database_url)
     return cfg
 
