@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rir2localdb"
-version = "0.1.0"
+version = "0.1.1"
 description = "Daily mirror of RIR FTP data into PostgreSQL with whois-like REST API"
 readme = "README.md"
 requires-python = ">=3.12"
