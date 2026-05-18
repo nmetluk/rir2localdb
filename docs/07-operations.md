@@ -24,6 +24,45 @@ rir2localdb status --json | jq '.summary_by_rir[] | "\(.rir): ip=\(.ip_allocatio
 DB недоступна — `--json` всё равно отвечает `{... "db_alive": false}`
 с exit 0, чтобы скрипт сам решил эскалировать.
 
+## RDAP fallback (Stage 3-05)
+
+ARIN не публикует open bulk RPSL с ownership; для остальных 4 RIR
+данные есть. Stage 3-05 закрывает gap через on-demand RDAP fallback:
+при отсутствии inetnum/aut_num в bulk-таблицах ARIN-блок дёргается
+через `rdap.arin.net/registry/ip/<addr>`, кэшируется в `rdap_cache`
+(default TTL 24h), вписывается в `rpsl` блок ответа прозрачно.
+
+**Opt-in через env:**
+
+```bash
+RIR2LOCALDB_RDAP_FALLBACK_ENABLED=true
+RIR2LOCALDB_RDAP_CACHE_TTL_HOURS=24
+RIR2LOCALDB_RDAP_NEGATIVE_CACHE_MINUTES=5
+```
+
+Default off — пользователь явно включает.
+
+**Rate-limit policy:** ARIN допускает ~50 req/min. Полагаемся на
+429-ответы + negative cache. При попадании на 429 кэшируется negative
+TTL=max(5min, Retry-After). Bursting против uncached blocks
+естественно дросселит сам себя.
+
+**Мониторинг:**
+
+```promql
+# Сколько RDAP запросов за час, разбивкой cache hit/miss / found/notfound
+rate(rir2localdb_rdap_lookups_total[1h])
+
+# Размер кэша
+rir2localdb_rdap_cache_entries{status="active"}
+rir2localdb_rdap_cache_entries{status="expired"}
+```
+
+GC автоматически удаляет entries старее 7 дней. Recently-expired
+сохраняются для diagnostic.
+
+См. ADR-0009 для rationale + alternatives.
+
 ## Локальная разработка
 
 ```bash

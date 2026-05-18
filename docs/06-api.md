@@ -47,6 +47,23 @@
 
 **400 Bad Request:** не валидный IP.
 
+### RDAP fallback (Stage 3-05)
+
+Для ARIN-блоков, у которых нет полного bulk RPSL дампа, API может
+fallback'нуться к RDAP (RFC 7480-7484) — open JSON whois API.
+
+- Включается env-флагом `RIR2LOCALDB_RDAP_FALLBACK_ENABLED=true`.
+  По умолчанию выключено.
+- Применяется **только к ARIN-блокам** и **только когда** bulk RPSL
+  inetnum/aut_num отсутствует.
+- Кэшируется в БД с TTL=24h (positive) / 5min (negative). Cleanup
+  expired entries (>7d) — частью daily GC.
+- Прозрачно для клиента: тот же `rpsl.inetnum` / `rpsl.organisation`
+  shape. ``source: "ARIN-RDAP"`` помечает origin для диагностики.
+
+Latency: cache hit ~ms, cache miss до +5s (RDAP HTTP timeout). См.
+ADR-0009 для rationale.
+
 ### Stale records (Stage 3-03)
 
 Все lookup-endpoint'ы (`/v1/ip/`, `/v1/asn/`) **скрывают stale-записи
