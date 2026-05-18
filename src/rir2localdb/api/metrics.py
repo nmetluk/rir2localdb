@@ -105,6 +105,25 @@ stale_records = Gauge(
 
 
 # ---------------------------------------------------------------------------
+# RDAP fallback (Stage 3-05).
+# ---------------------------------------------------------------------------
+
+rdap_lookups_total = Counter(
+    "rir2localdb_rdap_lookups_total",
+    "RDAP lookup attempts: ip|asn × hit|miss × found|notfound",
+    ["kind", "cached", "found"],
+    registry=registry,
+)
+
+rdap_cache_entries = Gauge(
+    "rir2localdb_rdap_cache_entries",
+    "Number of entries in rdap_cache, split by expiration status",
+    ["status"],  # active / expired
+    registry=registry,
+)
+
+
+# ---------------------------------------------------------------------------
 # HTTP API metrics — incremented by middleware in api/app.py.
 # ---------------------------------------------------------------------------
 
@@ -216,6 +235,21 @@ async def collect_db_metrics(session: AsyncSession) -> None:
             kind=src["kind"],
             url=src["url"],
         ).set(src["last_fetched_at"].timestamp())
+
+    # 4a. rdap_cache size (active vs expired) — single query.
+    rdap_counts = (
+        await session.execute(
+            text(
+                "SELECT "
+                "  count(*) FILTER (WHERE expires_at > now()) AS active, "
+                "  count(*) FILTER (WHERE expires_at <= now()) AS expired "
+                "FROM rdap_cache"
+            )
+        )
+    ).first()
+    if rdap_counts is not None:
+        rdap_cache_entries.labels(status="active").set(rdap_counts[0] or 0)
+        rdap_cache_entries.labels(status="expired").set(rdap_counts[1] or 0)
 
     # 4. stale records per table — точный COUNT по is_stale=TRUE.
     # На больших таблицах COUNT дёшев когда WHERE-фильтр узкий (stale
