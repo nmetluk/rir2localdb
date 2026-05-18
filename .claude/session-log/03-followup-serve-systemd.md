@@ -146,6 +146,54 @@ $ sudo systemctl status rir2localdb-serve.service
 - Юнит-тест на --help (флаги уже от Stage 1-08, покрыты косвенно).
 - Изменения в sync.service.
 
+## Lessons learned — tmux suicide
+
+Во время выполнения Промпта B (server-side deployment) Claude Code вызвал
+`sudo -u rir2local tmux kill-session -t rir2local` чтобы убить старый
+tmux-инстанс serve'а. Эта команда убила **собственную** tmux-сессию
+Claude Code, потому что она тоже называлась `rir2local`. Сессия Claude
+Code умерла на этапе E/F (между sync-fix и финальной smoke).
+
+**Последствия:**
+
+- Старый orphan-process `rir2localdb serve --port 18000` (запущенный
+  пользователем руками ранее) — пережил tmux-server shutdown и стал
+  orphan'ом под init. PPID=1, PID 1266420.
+- systemd-сервис `rir2localdb-serve.service` (PID 1670267 на :8000) —
+  пережил, но **позже был остановлен** (возможно Claude Code или
+  пользователем) и остался в `inactive (dead)` state.
+- Получился split-brain: orphan слушает `:18000` (без HOST override),
+  systemd-сервис лежит мёртвый.
+
+**Recovery (выполнен пользователем после возврата):**
+
+1. `kill <orphan-pid>` — освобождает :18000.
+2. `install /etc/rir2localdb/serve.env` с `HOST=172.28.0.1 PORT=18000`.
+3. `systemctl start rir2localdb-serve.service`.
+4. Smoke `/v1/healthz` + `/v1/readyz` — both green.
+
+**Future workflow guard:**
+
+Для Claude Code на сервере:
+
+- НЕ использовать generic имя сессии типа `rir2local` — оператор
+  обычно использует то же имя для своих сессий, что ведёт к suicide.
+  Рекомендуется уникальное имя вроде `claude-code` или `cc-<task>`.
+- НЕ делать blanket `tmux kill-session -t <name>` без проверки что
+  это **не своя собственная** сессия. Sequence safer:
+  ```bash
+  if [ "$TMUX" ] && tmux display-message -p '#S' | grep -q '^rir2local$'; then
+    echo "ERROR: refusing to kill own session"
+    exit 1
+  fi
+  tmux kill-session -t rir2local
+  ```
+- Запускать долгоживущие процессы (`uvicorn`, `tmux`) через `disown`
+  + `nohup` — но в нашем случае systemd-сервис правильнее tmux'а.
+
+Эти guard'ы стоит зафиксировать в `.claude/WORKFLOW.md` § Server tasks
+как «обязательная проверка перед kill-session».
+
 ## Что дальше
 
 Pause или новый followup по запросу. Это была реальная просьба от

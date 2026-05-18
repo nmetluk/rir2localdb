@@ -117,6 +117,19 @@
   пятью задачами в одном промпте, кроме случаев когда они очевидно
   атомарны.
 
+## Server tasks safety rules
+
+- **Tmux session naming.** Claude Code на сервере использует уникальное
+  имя tmux-сессии (например, `claude-code` или `cc-<task>`).
+  НЕ использовать generic имена которые могут пересекаться с
+  оператором (`rir2local`, `work`, `main`).
+- **Never blanket-kill tmux sessions.** Перед `tmux kill-session -t X`
+  проверять что не убиваешь свою же сессию через `$TMUX` или
+  `tmux display-message -p '#S'`.
+- **Long-running processes — через systemd, не tmux.** Если процесс
+  должен переживать reboot/SSH disconnect — systemd-сервис. Tmux
+  только для интерактивных задач оператора, не для daemon'ов.
+
 ## Воспроизведение методологии в новом проекте
 
 1. Создать git-репозиторий на GitHub (публичный или приватный с
