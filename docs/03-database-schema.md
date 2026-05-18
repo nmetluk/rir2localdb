@@ -146,46 +146,91 @@ CREATE INDEX asn_allocation_start      ON asn_allocation (start_asn);
 
 ### RPSL-таблицы (Stage 2)
 
-По одной семье таблиц на каждый RIR с богатым дампом
-(`ripe_*`, `apnic_*`, `afrinic_*`). Имена единообразные:
+**Одна таблица на тип объекта**, ``rir`` колонка как discriminator
+(см. ADR-0007). Партиционирование через ``PARTITION BY LIST (rir)`` —
+future work, прозрачно для API. Миграция `0002_rpsl_tables`.
 
-- `<rir>_inetnum`, `<rir>_inet6num`
-- `<rir>_aut_num`
-- `<rir>_organisation`
-- `<rir>_route`, `<rir>_route6`
-- `<rir>_as_block`
-- `<rir>_role`, `<rir>_mntner`, `<rir>_irt` (опционально)
+Восемь таблиц в Stage 2 § 2-02:
 
-Скелет inetnum-таблицы:
+| Таблица | Primary key | Range column (GiST) | Назначение |
+|---|---|---|---|
+| `inetnum` | `(rir, start_text, value)` | `range_v4 int8range` | IPv4-блоки |
+| `inet6num` | `(rir, start_text, value)` | `range_v6 numrange` | IPv6-префиксы |
+| `aut_num` | `(rir, asn)` | — | rich data на single ASN |
+| `organisation` | `(rir, org_handle)` | — | юр.лицо |
+| `route` | `(rir, prefix, origin)` | `prefix cidr` | IPv4 IRR-маршруты |
+| `route6` | `(rir, prefix, origin)` | `prefix cidr` | IPv6 IRR-маршруты |
+| `as_block` | `(rir, as_block_start, as_block_end)` | `asn_range int8range` | RPSL ASN-блок |
+| `role` | `(rir, nic_hdl)` | — | контактная роль |
+
+Скелет ``inetnum``-таблицы:
 
 ```sql
-CREATE TABLE ripe_inetnum (
-    primary_key     TEXT PRIMARY KEY,       -- значение поля 'inetnum:'
+CREATE TABLE inetnum (
+    rir             TEXT      NOT NULL,
+    start_text      INET      NOT NULL,
+    value           BIGINT    NOT NULL,        -- кол-во адресов
     range_v4        INT8RANGE NOT NULL,
     netname         TEXT,
     country         TEXT,
-    descr           TEXT,
-    status          TEXT,
-    org_handle      TEXT,                   -- ссылка на ripe_organisation.primary_key
-    mnt_by          TEXT[],
+    descr           TEXT,                       -- первый descr; полный в raw
+    org             TEXT,                       -- handle FK на organisation (не enforced)
     admin_c         TEXT[],
     tech_c          TEXT[],
-    abuse_c         TEXT,
+    status          TEXT,
+    mnt_by          TEXT[],
     created         TIMESTAMPTZ,
     last_modified   TIMESTAMPTZ,
     source          TEXT,
-    raw             JSONB NOT NULL,         -- все атрибуты как массивы строк
-    first_seen_run  BIGINT NOT NULL REFERENCES sync_run(id),
-    last_seen_run   BIGINT NOT NULL REFERENCES sync_run(id)
+    raw             JSONB     NOT NULL,         -- полный объект как dict[str, list[str]]
+    first_seen_run  BIGINT    NOT NULL REFERENCES sync_run(id),
+    last_seen_run   BIGINT    NOT NULL REFERENCES sync_run(id),
+    PRIMARY KEY (rir, start_text, value)
 );
 
-CREATE INDEX ripe_inetnum_range_gist ON ripe_inetnum USING gist (range_v4);
-CREATE INDEX ripe_inetnum_org        ON ripe_inetnum (org_handle);
+CREATE INDEX inetnum_range_v4_gist ON inetnum USING gist (range_v4);
+CREATE INDEX inetnum_org_idx       ON inetnum (org)     WHERE org IS NOT NULL;
+CREATE INDEX inetnum_country_idx   ON inetnum (country) WHERE country IS NOT NULL;
 ```
 
-`raw` хранит **полный** объект как JSONB
-(`{"inetnum": [...], "netname": [...], "remarks": [...]}`), чтобы
-ничего не терять и не страдать от расширений формата.
+**Ключевые моменты:**
+
+- ``start_text`` — start IP в форме INET (как в ``ip_allocation``), не
+  полная RPSL-строка ``"193.0.0.0 - 193.0.0.255"``. Полная — в ``raw``.
+- ``value`` — кол-во адресов для v4, длина префикса для v6 (как в
+  ``ip_allocation`` Stage 1).
+- ``descr TEXT`` — первый descr-атрибут (quick API display). Полный
+  список — в ``raw["descr"]: list[str]``.
+- ``org TEXT`` — handle organisation-объекта. **FK не enforced**:
+  может ссылаться на orphan-объект (legacy), или organisation в
+  таблице другого ``rir`` (cross-RIR ссылки в RPSL редки, но
+  существуют).
+- ``raw JSONB`` — полный объект как ``{key: [val, val, ...]}``, форма
+  совпадает с ``RpslObject`` из ``parsers/rpsl.py``. Гарантирует, что
+  никакая информация не теряется при добавлении RIR'ом нового
+  атрибута.
+
+Lookup IP в RPSL inetnum:
+
+```sql
+SELECT * FROM inetnum
+ WHERE range_v4 @> CAST($1 AS int8)
+ ORDER BY upper(range_v4) - lower(range_v4) ASC  -- самый специфичный
+ LIMIT 1;
+```
+
+Lookup route'ов покрывающих IP:
+
+```sql
+SELECT * FROM route
+ WHERE prefix >>= $1::inet
+ ORDER BY masklen(prefix) DESC                   -- самый специфичный
+ LIMIT 5;
+```
+
+**Отложено в Stage 2.5+:** ``mntner``, ``person``, ``as-set``. Они
+нужны для FK-расширений и routing-policy-queries; в DoD Stage 2
+(``curl /v1/ip/193.0.6.139`` → ``rpsl.inetnum.netname``) не задействованы.
 
 ## Стратегия обновления
 
