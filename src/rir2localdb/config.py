@@ -71,6 +71,21 @@ class Settings(BaseSettings):
     неделя при daily timer'е. Пережёвывает один failed run, выходной с
     downtime, slowly-rolling RIR snapshot. См. ADR-0008."""
 
+    rdap_fallback_enabled: bool = False
+    """Включить on-demand RDAP fallback для ARIN-блоков, у которых
+    нет bulk RPSL data (см. ADR-0009). Off by default — opt-in через
+    ``RIR2LOCALDB_RDAP_FALLBACK_ENABLED=true``."""
+
+    rdap_cache_ttl_hours: int = Field(default=24, ge=1, le=720)
+    """TTL положительных (200-OK) RDAP-ответов в ``rdap_cache``."""
+
+    rdap_negative_cache_minutes: int = Field(default=5, ge=1, le=60)
+    """TTL негативных (404 / 429 / 5xx) RDAP-ответов — короткий, чтобы
+    не долбить RDAP-сервер на отсутствующих блоках."""
+
+    rdap_http_timeout_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
+    """Полный таймаут одного RDAP HTTP-запроса."""
+
     @field_validator("log_format", mode="before")
     @classmethod
     def _normalize_log_format(cls, v: str) -> str:
