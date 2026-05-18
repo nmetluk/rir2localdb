@@ -1,0 +1,29 @@
+name: integration
+
+# Smoke tests против live RIR-зеркал. Бьют по ftp.ripe.net и т.п. —
+# нестабильны, поэтому не включены в основной CI. Запуск ежедневно
+# по cron + по кнопке "Run workflow" в Actions UI.
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # daily at 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: install
+        run: pip install -e ".[dev]"
+
+      - name: integration smoke (continue on error)
+        continue-on-error: true
+        run: pytest -m integration tests/integration/ -v
