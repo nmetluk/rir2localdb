@@ -71,12 +71,19 @@ rir2localdb status --json | jq '.recent_runs[0].status'
 
 ```bash
 sudo bash scripts/install-systemd.sh
-systemctl status rir2localdb-sync.timer  # должен быть active (waiting)
+systemctl status rir2localdb-sync.timer       # active (waiting), daily 03:00 UTC
+
+# Start HTTP API (не стартует автоматически, чтобы не bind'нуться неожиданно):
+sudo systemctl start rir2localdb-serve.service
+curl -fsS http://127.0.0.1:8000/v1/healthz
 ```
 
-Sync будет запускаться ежедневно в 03:00 UTC. Логи — через
-`journalctl -u rir2localdb-sync`. Подробности и hardening —
-[`docs/07-operations.md`](docs/07-operations.md) § «Daily sync via systemd».
+Для bind на другом интерфейсе/порту — override через
+`/etc/rir2localdb/serve.env` (см.
+[`docs/07-operations.md`](docs/07-operations.md) § «HTTP API server
+via systemd»).
+
+Логи: `journalctl -u rir2localdb-sync` + `journalctl -u rir2localdb-serve`.
 
 ### Production deployment (Docker)
 

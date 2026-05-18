@@ -243,6 +243,47 @@ systemctl edit rir2localdb-sync.timer
 systemctl disable --now rir2localdb-sync.timer
 ```
 
+### HTTP API server via systemd
+
+`rir2localdb-serve.service` — long-running FastAPI/uvicorn под
+тем же hardening, что и sync.service. По умолчанию слушает на
+`127.0.0.1:8000` — safe default, явно прячется от публичных
+интерфейсов до первого override.
+
+`scripts/install-systemd.sh` ставит этот юнит и `enable` его (autostart
+на boot), но **не запускает** автоматически — оператор сам решает
+когда стартовать (например, после первого `sync` для prepop'а БД).
+
+**Production override** через `/etc/rir2localdb/serve.env`:
+
+```bash
+sudo install -m 0644 /dev/stdin /etc/rir2localdb/serve.env <<EOF
+RIR2LOCALDB_SERVE_HOST=0.0.0.0
+RIR2LOCALDB_SERVE_PORT=18000
+EOF
+sudo systemctl restart rir2localdb-serve.service
+```
+
+Для bind только на private bridge network (например Docker compose
+gateway `172.28.0.1`) — укажите этот IP в `RIR2LOCALDB_SERVE_HOST`.
+Это безопаснее `0.0.0.0` + firewall: даже при misconfig firewall'а
+сервис не вылезает на публичные интерфейсы.
+
+Альтернатива — `systemctl edit rir2localdb-serve.service` (стандартный
+systemd drop-in). Дольше, но обе механики совместимы.
+
+**Smoke:**
+
+```bash
+sudo systemctl start rir2localdb-serve.service
+sleep 2
+curl -fsS http://127.0.0.1:8000/v1/healthz   # {"status":"ok"}
+sudo journalctl -u rir2localdb-serve -n 20   # JSON-логи uvicorn + structlog
+```
+
+`MemoryMax=1G`, `Restart=on-failure` с back-off (5 рестартов / 5 мин)
+— защита от рестарт-цикла при broken БД-config'е.
+
 ### Альтернативные варианты запуска
 
 systemd timer выше — рекомендуемый вариант для bare metal. Если он
