@@ -83,8 +83,35 @@ def parse_delegated(path: Path) -> Iterator[DelegatedRecord]:
 
 ## RPSL
 
-RPSL — это «whois-формат», на котором написаны inetnum, aut-num,
-organisation и пр.
+RPSL — «whois-формат» (Routing Policy Specification Language), на котором
+написаны inetnum, aut-num, organisation, person, role, mntner и пр.
+Используется RIPE NCC, APNIC, AFRINIC, ARIN (только route/route6/as-set/mntner
+в публичном IRR).
+
+**RFC-ссылки:**
+
+- [RFC 2622](https://www.rfc-editor.org/rfc/rfc2622) — RPSL (original, 1999).
+  Базовая структура объектов, синтаксис атрибутов.
+- [RFC 4012](https://www.rfc-editor.org/rfc/rfc4012) — RPSLng (2005).
+  IPv6 (`inet6num`, `route6`), multicast extensions.
+- [RIPE-181](https://www.ripe.net/publications/docs/ripe-181) — Routing
+  Policy specification (предшественник RPSL).
+
+**Типы объектов** (which we mirror via split-dumps):
+
+| Тип | Что описывает | Primary key |
+|---|---|---|
+| `inetnum` | IPv4-блок и кому он назначен | `inetnum: 193.0.0.0 - 193.0.0.255` |
+| `inet6num` | IPv6-префикс | `inet6num: 2001:7fd::/32` |
+| `aut-num` | ASN, его routing policy | `aut-num: AS3333` |
+| `route` | Маршрут IPv4 от ASN | `route: 193.0.0.0/22`, `origin: AS3333` |
+| `route6` | Маршрут IPv6 | `route6: 2001:7fd::/32`, `origin: AS3333` |
+| `as-block` | Диапазон ASN (для координации) | `as-block: AS1 - AS65535` |
+| `as-set` | Набор AS (политики) | `as-set: AS-CUSTOMERS` |
+| `organisation` | Юр.лицо | `organisation: ORG-RIEN1-RIPE` |
+| `role` | Контактная группа (NOC, abuse) | `role: nomcom@example` |
+| `person` | Контактное лицо (в RIPE дамифицировано в `.utf8.gz`) | `person: J. Doe` |
+| `mntner` | Maintainer объекта (право редактирования) | `mntner: RIPE-NCC-MNT` |
 
 ### Структура
 
@@ -105,25 +132,47 @@ inetnum:        193.0.8.0 - 193.0.15.255
 ...
 ```
 
-- **Объекты разделены пустой строкой.**
+- **Объекты разделены пустой строкой** (`\n\n` или CRLF-эквивалент).
+  Tail-объект (без trailing blank line) тоже валидный — парсер должен
+  его yield'ить.
 - **Атрибут — это `<name>: <value>`** (имя может содержать `-`).
-  Двоеточие, потом пробелы (1+), потом значение.
+  Двоеточие, потом whitespace (0+), потом значение. RFC 2622 §2 разрешает
+  как минимум один пробел после `:`; на практике часто tab-выравнивание.
 - **Продолжение значения** — следующая строка, начинающаяся либо
-  с пробела/таба, либо с `+`. Например:
+  с пробела/таба, либо с `+`. Семантика по RFC 2622 §2:
   ```
   descr:          Foo
                   Bar
   +               Baz
   ```
-  → атрибут `descr` со значением `Foo\nBar\nBaz`.
-- **Атрибут может повторяться** (`mnt-by`, `admin-c`, `remarks`, ...).
-  Все значения — массив.
-- **Комментарии**: `%` и `#` в начале строки в bulk-дампах
-  обычно отсутствуют, но парсер должен их пропускать.
-- **Кодировка**: для RIPE берём `.utf8.gz` (она UTF-8 нормализована).
-  APNIC и AFRINIC — UTF-8 без `.utf8` суффикса.
+  → атрибут `descr` со значением `Foo\nBar\nBaz` (в нашем парсере —
+  склейка через `\n`).
+- **Атрибут может повторяться** (`mnt-by`, `admin-c`, `tech-c`,
+  `remarks`, `descr`, `member-of`, `mp-import`, ...). Все значения
+  хранятся как `list[str]`.
+- **Primary key** — значение первого non-comment атрибута. Тип
+  объекта определяется по имени этого атрибута (`inetnum:` →
+  inetnum-объект, и т.д.).
+- **Комментарии**: строки, начинающиеся с `%` или `#`, пропускаются.
+  В bulk split-дампах редки, но возможны (header'ы, разделители).
+  Inline `%` / `#` (не в начале строки) — литерал, частью значения.
+- **Регистр ключей**: RPSL спецификация case-insensitive. RIPE / APNIC
+  / AFRINIC используют lowercase консистентно. ARIN IRR может
+  встречаться Mixed Case. Парсер нормализует в lowercase.
+- **Кодировка**: для RIPE берём `.utf8.gz` (PII-данные дамифицированы,
+  UTF-8 нормализована). APNIC и AFRINIC — `.gz` без `.utf8` суффикса,
+  но фактически UTF-8 (legacy ASCII совместимо). Парсер открывает с
+  `encoding="utf-8", errors="replace"` — устойчивость к редким
+  битым байтам, без падения на одном плохом инструменте.
+- **Размер**: RIPE `ripe.db.inetnum.utf8.gz` ~50 MB gzip, ~700 MB
+  uncompressed; AFRINIC `afrinic.db.gz` ~30 MB / ~400 MB. Парсер
+  потоковый, O(размер одного объекта) по памяти.
 
 ### Скелет парсера
+
+См. `src/rir2localdb/parsers/rpsl.py` — публичный API + контракт.
+Реализация в шаге 2-01b после согласования Q1-Q7. Образец-референс
+(оригинальный из `docs/05` Stage 0):
 
 ```python
 def parse_rpsl(reader: Iterable[str]) -> Iterator[dict[str, list[str]]]:
@@ -161,7 +210,11 @@ def parse_rpsl(reader: Iterable[str]) -> Iterator[dict[str, list[str]]]:
         yield obj
 ```
 
-Стрим работает на потоке gz: `with gzip.open(path, 'rt', encoding='utf-8') as f`.
+Стрим через gz: `with gzip.open(path, 'rt', encoding='utf-8',
+errors='replace') as f`.
+
+Автоопределение gzip: сначала по расширению `.gz`, fallback на
+magic-bytes `\x1f\x8b` в первых двух байтах файла.
 
 ### Распознавание типа объекта
 
@@ -191,8 +244,13 @@ def parse_rpsl_objects(reader): -> Iterator[RpslObject]:
 
 | Кейс | Что делать |
 |------|-----------|
-| Битый объект (без `:` в строке) | Логировать, пропускать |
-| Объект без первого атрибута, известного нам | Сохранять в `raw`, поле `type='unknown'` |
-| Файл оборвался посередине объекта | Не yield'ить недоделанный |
-| Дубль `primary_key` в одном файле | Последний выигрывает + предупреждение в логе |
-| Кодировка не UTF-8 (старые AFRINIC, например) | Fallback на `latin-1`, пометить файл в `sync_file.last_status='warn'` |
+| Битый объект (без `:` в строке) | Логировать, пропускать (Q6=a) |
+| Объект без первого атрибута (только comments между разделителями) | Не yield'ить, инкрементировать `objects_skipped_empty` |
+| Объект без `source:` атрибута | Допустим в RFC 2622, но в дампах RIR обычно есть. Yield, без warning'а. |
+| Tail-объект без trailing blank line | Yield (валидный конец файла). |
+| Файл оборвался посередине объекта (no trailing blank, no continuation closure) | Если есть primary key — yield as-is; иначе skip. |
+| Дубль `primary_key` в одном файле | Парсер обоих yield'ит; ETL решает policy (last wins / merge). |
+| Кодировка не UTF-8 | `errors='replace'` → `?` на месте битых байт. Не валим прогон. |
+| Continuation line как самая первая строка объекта | Skip (malformed); current_attr — None. |
+| `\\` в значениях | Литерал, не escape. |
+| Trailing whitespace в значении | Strip'ается (`value.strip()`). |
