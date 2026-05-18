@@ -29,6 +29,7 @@ dependencies = [
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "structlog>=24.1",
+    "prometheus-client>=0.20",
     "tqdm>=4.66",
 ]
 
