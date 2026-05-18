@@ -39,7 +39,10 @@
     `is_stale` + 7-run grace; auto после успешного sync; API hide
     by default + `?include_stale=true`; gauge
     `rir2localdb_stale_records`. ADR-0008, `03-03-stale-records-gc.md`.
-  - 3-04 ⏳ Dockerfile + compose.
+  - **3-04** ✅ Dockerfile + compose (2026-05-18). Multi-stage build
+    на `python:3.12-slim`, один image / три CMD (serve/migrate/sync),
+    non-root user, compose profile'ы для oneshot oneshot. Live smoke:
+    full stack up + healthz/readyz зелёные. `03-04-docker.md`.
   - 3-05 ⏳ RDAP fallback (опц.).
   - 3-06 ⏳ Grafana + alerts.
   - 3-07 ⏳ API mntner/person/as_set (опц.).
