@@ -101,6 +101,39 @@ RIR режет HTTPS быстрее, чем FTP. Спойлер: не режет
 - Если на Stage 3 нужно ускорить — параллелим разные RIR-ы,
   потому что они независимы и пишут в разные таблицы.
 
+## GC and stale records
+
+После успешного sync'а orchestrator вызывает `run_gc(session, settings)`
+**в той же транзакции**. Policy (ADR-0008):
+
+- Запись помечается `is_stale=TRUE` если её `last_seen_run` строго
+  меньше id N-ого с конца successful `sync_run`'а. `N = gc_grace_runs`
+  (`Settings`, default 7).
+- Симметрично: stale запись, touched текущим (или recent в last N)
+  sync'ом — `is_stale` возвращается в `FALSE`.
+- **Hard delete не делаем.** Stale-навсегда; отдельный purge —
+  Stage 4+ если понадобится.
+
+13 таблиц субъекты GC: `ip_allocation`, `asn_allocation`, 11 RPSL
+(`inetnum`, `inet6num`, `aut_num`, `organisation`, `role`, `route`,
+`route6`, `as_block`, `mntner`, `person`, `as_set`).
+
+**Bootstrap.** Пока успешных sync_run'ов меньше N, threshold = NULL,
+GC ничего не делает. Безопасно стартовать с нуля.
+
+**Manual diagnostic** — `rir2localdb gc --dry-run` показывает JSON
+со счётчиками без записи в БД. Production GC бежит автоматически
+после daily sync через systemd timer.
+
+**API:** запросы `/v1/ip/{addr}` и `/v1/asn/{num}` по умолчанию
+скрывают stale (404 если активной записи нет). `?include_stale=true`
+включает их в ответ. Каждый блок объект ответа содержит поле
+`is_stale: bool` для прозрачности.
+
+**Metrics:** gauge `rir2localdb_stale_records{table}` — текущее
+число stale-rows на каждую таблицу. Растёт при normal aging,
+сбрасывается при clear-back.
+
 ## Orchestrator: format-based ETL dispatch
 
 `sync/orchestrator.py` после `fetch` / `write_result` смотрит

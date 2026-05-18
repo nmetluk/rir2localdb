@@ -47,6 +47,19 @@
 
 **400 Bad Request:** не валидный IP.
 
+### Stale records (Stage 3-03)
+
+Все lookup-endpoint'ы (`/v1/ip/`, `/v1/asn/`) **скрывают stale-записи
+по умолчанию**. Запись считается stale если GC пометил её
+`is_stale=TRUE` (не появлялась в последних N успешных sync'ах,
+default N=7). См. ADR-0008.
+
+- `?include_stale=true` — включить stale-записи в результат поиска.
+  Полезно для аналитики или recovery после поломавшегося sync'а.
+- Поле `is_stale: bool` присутствует во всех объектах ответа.
+  Active записи имеют `is_stale: false`. Stale (когда запросили с
+  `include_stale=true`) — `is_stale: true`.
+
 ### `GET /v1/asn/{num}`
 
 ```json
