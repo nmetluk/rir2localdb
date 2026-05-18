@@ -11,8 +11,9 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
-from pydantic import PostgresDsn
+from pydantic import PostgresDsn, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -52,6 +53,22 @@ class Settings(BaseSettings):
     """Сколько раз ретраить один HTTP-запрос на 5xx/429/network errors.
     См. ``_retry_request`` в ``sync/fetcher.py`` про backoff.
     """
+
+    log_level: str = "INFO"
+    """``DEBUG`` / ``INFO`` / ``WARNING`` / ``ERROR`` / ``CRITICAL``.
+    Регистр не важен."""
+
+    log_format: Literal["console", "json"] = "console"
+    """``console`` — human-readable color-less вывод (по умолчанию,
+    подходит для интерактивной разработки и journald). ``json`` —
+    single-line JSON per event для production-парсинга через ``jq`` /
+    Loki / Elastic.
+    """
+
+    @field_validator("log_format", mode="before")
+    @classmethod
+    def _normalize_log_format(cls, v: str) -> str:
+        return v.lower() if isinstance(v, str) else v
 
 
 @lru_cache(maxsize=1)

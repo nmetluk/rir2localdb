@@ -54,8 +54,8 @@ def sync(
     ] = False,
 ) -> None:
     """Запустить один sync-run по заданным тирам."""
-    configure_logging()
     settings = get_settings()
+    configure_logging(level=settings.log_level, json_format=settings.log_format == "json")
     tier_list = tier or [Tier.CORE]
     summary = asyncio.run(run_sync(tier_list, settings, dry_run=dry_run))
     _print_summary(summary, dry_run=dry_run)
@@ -79,8 +79,9 @@ def status(
     ``{recent_runs, sources, summary_by_rir, db_alive}``. Совпадает с
     HTTP endpoint'ом ``/v1/status``.
     """
-    configure_logging(level="WARNING")  # CLI status — без INFO-шума
     settings = get_settings()
+    # CLI status — без INFO-шума, override level. Формат — как в settings.
+    configure_logging(level="WARNING", json_format=settings.log_format == "json")
     payload = asyncio.run(_collect_status(settings))
     if json_output:
         typer.echo(json.dumps(payload, indent=2, default=str))
@@ -96,8 +97,8 @@ def migrate(
     ] = "head",
 ) -> None:
     """Применить ``alembic upgrade`` до указанной revision."""
-    configure_logging()
     settings = get_settings()
+    configure_logging(level=settings.log_level, json_format=settings.log_format == "json")
     cfg = _alembic_config(settings)
     alembic.command.upgrade(cfg, revision)
     typer.echo(f"alembic upgrade {revision} — done")
@@ -119,8 +120,9 @@ def serve(
 
     from rir2localdb.api.app import make_app
 
-    configure_logging()
-    uvicorn.run(make_app(), host=host, port=port)
+    settings = get_settings()
+    configure_logging(level=settings.log_level, json_format=settings.log_format == "json")
+    uvicorn.run(make_app(settings), host=host, port=port)
 
 
 @app.command()
