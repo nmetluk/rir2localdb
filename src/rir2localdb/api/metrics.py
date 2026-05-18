@@ -93,6 +93,18 @@ source_last_fetched_timestamp = Gauge(
 
 
 # ---------------------------------------------------------------------------
+# GC / stale records (Stage 3-03).
+# ---------------------------------------------------------------------------
+
+stale_records = Gauge(
+    "rir2localdb_stale_records",
+    "Number of records currently marked as stale by GC (per table)",
+    ["table"],
+    registry=registry,
+)
+
+
+# ---------------------------------------------------------------------------
 # HTTP API metrics — incremented by middleware in api/app.py.
 # ---------------------------------------------------------------------------
 
@@ -204,6 +216,19 @@ async def collect_db_metrics(session: AsyncSession) -> None:
             kind=src["kind"],
             url=src["url"],
         ).set(src["last_fetched_at"].timestamp())
+
+    # 4. stale records per table — точный COUNT по is_stale=TRUE.
+    # На больших таблицах COUNT дёшев когда WHERE-фильтр узкий (stale
+    # rows обычно <1%). Если станет slow на проде — switch to
+    # approximation после добавления отдельного index ON is_stale=TRUE.
+    # sync_run / sync_file не subject GC — пропускаем.
+    for table in _TRACKED_TABLES:
+        if table in ("sync_run", "sync_file"):
+            continue
+        count = (
+            await session.execute(text(f"SELECT count(*) FROM {table} WHERE is_stale = TRUE"))
+        ).scalar_one()
+        stale_records.labels(table=table).set(count or 0)
 
 
 @router.get("/metrics")
