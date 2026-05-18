@@ -20,7 +20,11 @@ from rir2localdb.db.models import Base
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False — иначе fileConfig() по дефолту
+    # отключает ВСЕ логгеры, не упомянутые в alembic.ini [loggers], включая
+    # наши `rir2localdb.*`. После alembic upgrade в тестах warning-логи
+    # парсера/fetcher'а пропадают, и тесты на caplog/handler-капчуру падают.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # URL: программный вызов (тесты, скрипты) может задать sqlalchemy.url
 # через ``cfg.set_main_option("sqlalchemy.url", ...)`` ДО запуска

@@ -316,18 +316,34 @@ ripencc|DE|ipv4|1.2.3.0|256|00000000|reserved|A91|e-stats
     assert records[0].date is None
 
 
-def test_unknown_type_skipped_with_warning(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    # Forward-compat: если NRO добавит новый тип ресурса (например 'ipv7'),
-    # парсер пропустит запись и сообщит в лог.
-    content = """\
+def test_unknown_type_skipped_with_warning(tmp_path: Path) -> None:
+    """Forward-compat: NRO добавляет новый тип ресурса → парсер пропускает + warning.
+
+    Не используем ``caplog`` — он флакует в комбинации с другими тестами
+    (видимо, lifespan-контексты FastAPI в test_api_smoke.py меняют
+    хэндлеры root logger'а). Прикрепляем свой handler напрямую к
+    parser-логгеру.
+    """
+
+    captured: list[str] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            captured.append(record.getMessage())
+
+    parser_logger = logging.getLogger("rir2localdb.parsers.delegated")
+    handler = _Capture(level=logging.WARNING)
+    parser_logger.addHandler(handler)
+    try:
+        content = """\
 2|apnic|20260517|110000|19830101|20260516|+1000
 apnic|JP|ipv7|fe80::|64|20300101|allocated|A91|e-stats
 apnic|JP|asn|2497|1|19960207|allocated|A91|e-stats
 """
-    with caplog.at_level(logging.WARNING, logger="rir2localdb.parsers.delegated"):
         records = list(parse_delegated(_write(tmp_path, content)))
+    finally:
+        parser_logger.removeHandler(handler)
+
     assert len(records) == 1
     assert records[0].type == "asn"
-    assert any("unknown resource type" in r.message for r in caplog.records)
+    assert any("unknown resource type" in msg for msg in captured), captured

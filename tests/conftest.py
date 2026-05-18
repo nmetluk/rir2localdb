@@ -130,13 +130,20 @@ async def sync_run_id(db_session: AsyncSession) -> int:
 
 
 @pytest_asyncio.fixture
-async def pg_conn(test_database_url: str) -> AsyncIterator[asyncpg.Connection]:
+async def pg_conn(
+    test_engine: AsyncEngine, test_database_url: str
+) -> AsyncIterator[asyncpg.Connection]:
     """Raw ``asyncpg.Connection`` в транзакции с rollback'ом в teardown.
 
     Используется ETL-тестами (``apply_delegated_etl`` принимает именно
     ``asyncpg.Connection``, ADR-0005 § hot path). Отдельное физ.соединение
     от ``db_session`` — каждое со своим rollback'ом, без cross-видимости.
+
+    Зависит от ``test_engine`` чтобы гарантировать, что миграции
+    применены к тестовой БД ДО первого подключения (на CI БД свеже
+    созданная и пустая; локально может сохраняться между прогонами).
     """
+    _ = test_engine  # triggers session-scoped migrations
     # asyncpg.connect не понимает SQLAlchemy-суффикс '+asyncpg'.
     url = test_database_url.replace("+asyncpg", "")
     conn = await asyncpg.connect(url)
@@ -163,7 +170,9 @@ async def pg_sync_run_id(pg_conn: asyncpg.Connection) -> int:
 
 
 @pytest_asyncio.fixture
-async def clean_db(test_database_url: str) -> AsyncIterator[asyncpg.Connection]:
+async def clean_db(
+    test_engine: AsyncEngine, test_database_url: str
+) -> AsyncIterator[asyncpg.Connection]:
     """Autocommit-asyncpg conn с ``TRUNCATE … RESTART IDENTITY CASCADE`` до и после теста.
 
     Используется тестами orchestrator'а и API, где код коммитит свою
@@ -171,10 +180,12 @@ async def clean_db(test_database_url: str) -> AsyncIterator[asyncpg.Connection]:
     потому что её rollback не отменит чужие commit'ы). Альтернатива
     — пара отдельных физ.соединений и truncate-фикстура. Дёшево.
 
-    Tests fixture-уровня очищают и видят коммиченные данные через
-    одну и ту же ``clean_db`` connection, либо через свои новые
-    подключения (тогда состояние видно через PostgreSQL READ COMMITTED).
+    Зависит от ``test_engine`` чтобы гарантировать применённые миграции
+    до TRUNCATE — иначе TRUNCATE упадёт на отсутствующих таблицах
+    (актуально на CI с свежей БД; локально таблицы переживают между
+    прогонами).
     """
+    _ = test_engine  # triggers session-scoped migrations
     url = test_database_url.replace("+asyncpg", "")
     conn = await asyncpg.connect(url)
     truncate_sql = (
