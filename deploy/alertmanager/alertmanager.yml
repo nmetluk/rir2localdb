@@ -1,0 +1,58 @@
+# Example Alertmanager config: route alerts → Telegram bot.
+#
+# Использует тот же бот, что и notify-session-log workflow в Telegram,
+# но **отдельный** чат — чтобы операционные алерты не мешались с
+# development-нотификациями.
+#
+# Setup:
+#   1. Создать новый Telegram-канал (например, "rir2localdb alerts").
+#   2. Добавить туда бота как админа с правом постить.
+#   3. Получить chat_id (вызвать `getUpdates` или через @userinfobot).
+#   4. Подставить значения в env Alertmanager'а:
+#        TELEGRAM_BOT_TOKEN=<тот же что в GitHub secrets>
+#        TELEGRAM_ALERTS_CHAT_ID=-100<chat_id>
+#   5. В этом файле параметризовать через `$()` substitution либо
+#      replace перед mount'ом.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: telegram-alerts
+  group_by: ['alertname', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    # Critical → отдельный route с более коротким repeat (повторный
+    # ping каждый час пока не resolved).
+    - matchers:
+        - severity = "critical"
+      receiver: telegram-alerts
+      repeat_interval: 1h
+
+receivers:
+  - name: telegram-alerts
+    telegram_configs:
+      - bot_token_file: /etc/alertmanager/telegram_bot_token
+        chat_id: -1003983148345  # ← replace with real channel id
+        api_url: https://api.telegram.org
+        parse_mode: HTML
+        message: |
+          <b>[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}]</b> {{ .CommonLabels.alertname }}
+          <b>Severity:</b> {{ .CommonLabels.severity }}
+          <b>Service:</b> {{ .CommonLabels.service }}
+
+          {{ range .Alerts }}
+          <b>Summary:</b> {{ .Annotations.summary }}
+          {{ if .Annotations.description }}<b>Description:</b>
+          <pre>{{ .Annotations.description }}</pre>{{ end }}
+          {{ end }}
+
+inhibit_rules:
+  # При SyncStaleCritical не алёртить SyncStale (избегаем дублей).
+  - source_matchers:
+      - alertname = "SyncStaleCritical"
+    target_matchers:
+      - alertname = "SyncStale"
+    equal: ['service']
