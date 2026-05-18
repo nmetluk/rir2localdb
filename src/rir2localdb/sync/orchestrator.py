@@ -133,6 +133,9 @@ class SyncRunSummary:
     gc_cleared_stale: dict[str, int] = field(default_factory=dict)
     """Per-table count записей у которых ``is_stale=TRUE`` → ``FALSE`` —
     вернувшиеся в активные после того как sync снова их увидел."""
+    gc_rdap_cache_deleted: int = 0
+    """Stage 3-05: сколько expired ``rdap_cache`` entries удалено (старее
+    7 дней). 0 если cache пуст или ничего не protruded over 7d."""
     error: str | None = None
     """``None`` при ``status='success'``; человеко-читаемое сообщение
     при ``'failed'`` (lock contention, БД недоступна, и т.п.).
@@ -452,6 +455,7 @@ def _build_summary(
         gc_threshold_run_id=gc_stats.threshold_run_id if gc_stats else None,
         gc_marked_stale=dict(gc_stats.marked_stale) if gc_stats else {},
         gc_cleared_stale=dict(gc_stats.cleared_stale) if gc_stats else {},
+        gc_rdap_cache_deleted=gc_stats.rdap_cache_deleted if gc_stats else 0,
         duration_ms=int((time.perf_counter() - started) * 1000),
         error=error,
     )

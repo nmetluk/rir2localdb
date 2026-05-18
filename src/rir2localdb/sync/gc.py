@@ -70,6 +70,9 @@ class GcStats:
     threshold_run_id: int | None
     marked_stale: dict[str, int] = field(default_factory=dict)
     cleared_stale: dict[str, int] = field(default_factory=dict)
+    rdap_cache_deleted: int = 0
+    """Сколько expired-RDAP entries удалено (см. Stage 3-05). 0 если
+    rdap_cache пуст или ничего не expired более чем 7 дней назад."""
 
 
 async def run_gc(session: AsyncSession, settings: Settings) -> GcStats:
@@ -135,9 +138,19 @@ async def run_gc(session: AsyncSession, settings: Settings) -> GcStats:
         if clear_result.rowcount > 0:
             cleared[table] = clear_result.rowcount
 
+    # Cleanup expired RDAP cache entries — старее 7 дней.
+    # Recently-expired (within 7d) сохраняются для diagnostic /
+    # observability через ``rir2localdb_rdap_cache_entries{status=expired}``.
+    rdap_result = await session.execute(
+        text("DELETE FROM rdap_cache WHERE expires_at < now() - INTERVAL '7 days'")
+    )
+    assert isinstance(rdap_result, CursorResult)
+    rdap_deleted = rdap_result.rowcount if rdap_result.rowcount > 0 else 0
+
     return GcStats(
         grace_runs=grace_runs,
         threshold_run_id=threshold_id,
         marked_stale=marked,
         cleared_stale=cleared,
+        rdap_cache_deleted=rdap_deleted,
     )
