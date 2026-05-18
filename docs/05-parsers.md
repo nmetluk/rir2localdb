@@ -145,8 +145,11 @@ inetnum:        193.0.8.0 - 193.0.15.255
                   Bar
   +               Baz
   ```
-  → атрибут `descr` со значением `Foo\nBar\nBaz` (в нашем парсере —
-  склейка через `\n`).
+  → атрибут `descr` со значением `Foo Bar Baz`. RFC не предписывает
+  разделитель между continuation-fragment'ами; на практике RIPE
+  использует **одиночный пробел**, и парсер склеивает именно так.
+  Пустой continuation (`+` + только пробелы) — no-op, не добавляет
+  trailing space.
 - **Атрибут может повторяться** (`mnt-by`, `admin-c`, `tech-c`,
   `remarks`, `descr`, `member-of`, `mp-import`, ...). Все значения
   хранятся как `list[str]`.
@@ -193,7 +196,10 @@ def parse_rpsl(reader: Iterable[str]) -> Iterator[dict[str, list[str]]]:
         if line[0] in (' ', '\t', '+'):
             if current_attr is None:
                 continue                # malformed; skip
-            obj[current_attr][-1] += '\n' + line[1:].lstrip()
+            # Continuation join via single space (RIPE convention).
+            cont = line[1:].lstrip() if line[0] == '+' else line.lstrip()
+            if cont:
+                obj[current_attr][-1] += ' ' + cont
             continue
 
         if line[0] in ('%', '#'):       # comment
