@@ -257,8 +257,25 @@ ALL_SOURCES: Final[tuple[Source, ...]] = (
 
 
 def sources_for_tiers(tiers: set[Tier]) -> tuple[Source, ...]:
-    """Вернуть источники для активных tier'ов."""
-    return tuple(s for s in ALL_SOURCES if s.tier in tiers)
+    """Вернуть источники для активных tier'ов.
+
+    **Auto-expansion: ``RICH`` подтягивает ``ARIN_RR``.** Tier'ы в каталоге
+    (``CORE``, ``RICH``, ``ARIN_RR``, ``ARIN_BULK``) — это логическая
+    группировка по природе данных, а публичный CLI принимает product-level
+    группы. ``--tier rich`` означает «whois-rich»: split-дампы RIPE / APNIC /
+    AFRINIC **плюс** ARIN IRR, потому что ARIN'у whois-богатых данных
+    публично отдавать нечего, только IRR. Поэтому при ``Tier.RICH`` в
+    запросе мы автоматически добавляем ``Tier.ARIN_RR``.
+
+    Если кто-то специально хочет только ARIN IRR без полного RPSL (например
+    обновить routing после изменения BGP, не трогая мега-дампы) —
+    ``--tier arin-rr`` без ``--tier rich``. Эта тонкая comb остаётся
+    доступной.
+    """
+    expanded = set(tiers)
+    if Tier.RICH in expanded:
+        expanded.add(Tier.ARIN_RR)
+    return tuple(s for s in ALL_SOURCES if s.tier in expanded)
 
 
 def sources_by_rir(rir: Rir, tier: Tier | None = None) -> tuple[Source, ...]:
