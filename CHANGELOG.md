@@ -5,30 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.1] — 2026-05-19
+
+First release driven by real-world feedback (whois-watcher integration).
+Bare-metal long-running API server deployment was a gap in v0.1.0 —
+operators had to choose between unmanaged tmux processes or Docker compose.
+v0.1.1 closes this with a hardened systemd service unit, plus a critical
+fix for structured logs in systemd context.
 
 ### Added
-
-- `deploy/systemd/rir2localdb-serve.service` — systemd-юнит для долгоживущего
-  HTTP API. Параметризуется через `/etc/rir2localdb/serve.env` (`HOST`/`PORT`).
-  Hardened sandbox по образцу sync.service; `AF_NETLINK` добавлен в
-  `RestrictAddressFamilies` для async DNS resolution.
-- `scripts/install-systemd.sh` теперь ставит и `serve.service` (`enable` без
-  autostart), создаёт `/etc/rir2localdb/` для override-файлов.
-- Документация по deployment HTTP API через systemd с примерами override.
+- `deploy/systemd/rir2localdb-serve.service` — systemd unit for long-running
+  FastAPI server. Parameterized bind via `/etc/rir2localdb/serve.env`
+  (HOST/PORT env vars), so the same unit serves all deployment topologies
+  (`127.0.0.1` for standalone, private bridge gateway for Docker-network
+  integration, `0.0.0.0` for public exposure with external firewall).
+- `install-systemd.sh` now installs and enables (but does not autostart)
+  `serve.service`. Operator decides when to launch.
+- Hardening identical to `sync.service` minus `ReadWritePaths` (serve does
+  not write to disk).
+- `AF_NETLINK` in `RestrictAddressFamilies` for async DNS resolution in
+  asyncpg/httpx.
+- Documentation: `docs/07-operations.md` § "HTTP API server via systemd"
+  with override examples and rationale for private bridge bind vs `0.0.0.0`
+  + firewall.
 
 ### Fixed
+- `rir2localdb serve` passes `log_config=None` to uvicorn. Without this,
+  uvicorn installs its own root-logger dictConfig at startup, overriding
+  the structlog handler from `configure_logging()`. Result: in
+  production-mode systemd run with `RIR2LOCALDB_LOG_FORMAT=json`,
+  uvicorn-emitted logs (request/access/error) were plain-text while
+  application logs were JSON — broken jq parsing in journald.
 
-- CLI `serve` теперь вызывает `uvicorn.run(..., log_config=None)` — без
-  этого uvicorn перебивал structlog setup и в production-режиме JSON-логи
-  терялись.
+### Documentation
+- `WORKFLOW.md` § "Server tasks safety rules" — guidelines for Claude Code
+  operating on production servers (unique tmux session names, no
+  blanket-kill of own session, prefer systemd over tmux for daemons).
+- Session-log `03-followup-serve-systemd.md` includes "Lessons learned"
+  section documenting a tmux suicide incident during initial deployment.
 
-### Notes
-
-- `serve.service` НЕ стартует автоматически после `install-systemd.sh` —
-  оператор сам решает когда (например, после первого `sync` для prepop'а БД).
-- Дефолтный bind `127.0.0.1:8000` — safe default; для exposure нужен явный
-  override.
+### Operations
+- First production deployment verified: serve.service active on
+  `172.28.0.1:18000` (Docker bridge gateway for whois-watcher integration),
+  sync.service successful (sync_run id=7), sync.timer active waiting for
+  next 03:00 UTC trigger.
 
 ## [0.1.0] — 2026-05-18
 
@@ -131,4 +151,5 @@ via is_stale, RDAP fallback.
   catalog declares the tier but ingestion requires an ARIN API key
   + ToU acceptance.
 
+[0.1.1]: https://github.com/nmetluk/rir2localdb/releases/tag/v0.1.1
 [0.1.0]: https://github.com/nmetluk/rir2localdb/releases/tag/v0.1.0
