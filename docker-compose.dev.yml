@@ -1,0 +1,21 @@
+# Dev override.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# Дополняет/переопределяет main compose:
+# - Postgres exposed на host port 5432 (для psql / DB GUI с хоста).
+# - api в human-readable log mode + DEBUG.
+# - editable mount src/ → /opt/venv/lib/python3.12/site-packages/rir2localdb
+#   для hot-reload без rebuild image'а.
+
+services:
+  postgres:
+    ports:
+      - "5432:5432"
+
+  api:
+    environment:
+      RIR2LOCALDB_LOG_FORMAT: console
+      RIR2LOCALDB_LOG_LEVEL: DEBUG
+    volumes:
+      - ./src/rir2localdb:/opt/venv/lib/python3.12/site-packages/rir2localdb:ro
