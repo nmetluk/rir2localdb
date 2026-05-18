@@ -59,6 +59,9 @@ ASN + 9.65M RPSL objects** (5.5M inetnum, 1.5M route, 1.1M inet6num,
   `02-followup-arin-zero-padded-prefix.md`; `_canonicalize_v4_prefix`
   pre-normalize'ит `069.031.132.000/23` → `69.31.132.0/23` перед
   IPv4Network. +92 route'а ARIN при следующем sync.
+- ~~CLI machine-readable status~~ — закрыт 2026-05-18 followup'ом
+  `02-followup-cli-status-json.md`; `rir2localdb status --json` выдаёт
+  `{recent_runs, sources, summary_by_rir, db_alive}` для cron/мониторинга.
 - `rir` divergence: `ip_allocation.rir="ripencc"` vs
   `inetnum.rir="ripe"`. Нормализация в Stage 3.
 - Stage 2-06 RDAP fallback (опционально, для ARIN ownership).
