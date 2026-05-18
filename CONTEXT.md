@@ -35,7 +35,10 @@
     через structlog (2026-05-18). `03-02-metrics-and-structured-logs.md`.
     Заодно поймал и пофиксил `now()` → `clock_timestamp()` для
     sync_run.finished_at.
-  - 3-03 ⏳ Stale-records GC.
+  - **3-03** ✅ Stale-records GC (2026-05-18). Soft-delete через
+    `is_stale` + 7-run grace; auto после успешного sync; API hide
+    by default + `?include_stale=true`; gauge
+    `rir2localdb_stale_records`. ADR-0008, `03-03-stale-records-gc.md`.
   - 3-04 ⏳ Dockerfile + compose.
   - 3-05 ⏳ RDAP fallback (опц.).
   - 3-06 ⏳ Grafana + alerts.
