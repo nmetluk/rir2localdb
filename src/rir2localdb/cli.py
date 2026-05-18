@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import importlib.resources
 import json
-from typing import Annotated
+from typing import Annotated, Any
 
 import alembic.command
 import alembic.config
@@ -64,11 +64,28 @@ def sync(
 
 
 @app.command()
-def status() -> None:
-    """Показать последние 5 sync_run и текущее состояние sync_file."""
+def status(
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help="Output machine-readable JSON instead of rich tables.",
+        ),
+    ] = False,
+) -> None:
+    """Показать последние 5 sync_run и текущее состояние sync_file.
+
+    ``--json`` — machine-readable JSON со схемой
+    ``{recent_runs, sources, summary_by_rir, db_alive}``. Совпадает с
+    HTTP endpoint'ом ``/v1/status``.
+    """
     configure_logging(level="WARNING")  # CLI status — без INFO-шума
     settings = get_settings()
-    asyncio.run(_print_status(settings))
+    payload = asyncio.run(_collect_status(settings))
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2, default=str))
+    else:
+        _render_status_tables(payload)
 
 
 @app.command()
@@ -165,8 +182,16 @@ def _print_summary(summary: SyncRunSummary, *, dry_run: bool) -> None:
         typer.echo(f"  error: {summary.error}", err=True)
 
 
-async def _print_status(settings: Settings) -> None:
-    """Две таблицы: последние sync_run и sync_file."""
+async def _collect_status(settings: Settings) -> dict[str, Any]:
+    """Собрать payload для ``status``: recent_runs + sources + per-RIR + db_alive.
+
+    Структура соответствует HTTP endpoint'у ``/v1/status``:
+    ``{recent_runs, sources, summary_by_rir, db_alive}``. Используется
+    и для rich-tables рендера, и для JSON-вывода.
+
+    На любой ошибке (DB недоступна) — ``db_alive=False`` и пустые
+    списки, чтобы CLI отрабатывал предсказуемо даже когда PG лежит.
+    """
     engine = create_async_engine(settings.database_url)
     try:
         async with engine.connect() as conn:
@@ -181,42 +206,126 @@ async def _print_status(settings: Settings) -> None:
             files = (
                 await conn.execute(
                     text(
-                        "SELECT url, rir, kind, last_status, last_fetched_at "
-                        "FROM sync_file ORDER BY last_fetched_at DESC NULLS LAST"
+                        "SELECT url, rir, kind, last_status, last_fetched_at, "
+                        "last_parsed_at, last_size FROM sync_file "
+                        "ORDER BY last_fetched_at DESC NULLS LAST"
                     )
                 )
             ).all()
+            ip_counts = {
+                r.rir: r.count
+                for r in (
+                    await conn.execute(
+                        text("SELECT rir, COUNT(*) AS count FROM ip_allocation GROUP BY rir")
+                    )
+                ).all()
+            }
+            asn_counts = {
+                r.rir: r.count
+                for r in (
+                    await conn.execute(
+                        text("SELECT rir, COUNT(*) AS count FROM asn_allocation GROUP BY rir")
+                    )
+                ).all()
+            }
+            fetched_at = {
+                r.rir: r.last_fetched_at
+                for r in (
+                    await conn.execute(
+                        text(
+                            "SELECT rir, MAX(last_fetched_at) AS last_fetched_at "
+                            "FROM sync_file GROUP BY rir"
+                        )
+                    )
+                ).all()
+            }
+        db_alive = True
+    except Exception:
+        runs = []
+        files = []
+        ip_counts = {}
+        asn_counts = {}
+        fetched_at = {}
+        db_alive = False
     finally:
         await engine.dispose()
 
+    recent_runs: list[dict[str, Any]] = []
+    for row in runs:
+        recent_runs.append(
+            {
+                "id": row.id,
+                "tier": row.tier,
+                "started_at": row.started_at,
+                "finished_at": row.finished_at,
+                "status": row.status,
+                "rpsl_records": _rpsl_records_from_stats(row.stats),
+                "error": row.error,
+            }
+        )
+
+    sources: list[dict[str, Any]] = [
+        {
+            "url": row.url,
+            "rir": row.rir,
+            "kind": row.kind,
+            "last_status": row.last_status,
+            "last_fetched_at": row.last_fetched_at,
+            "last_parsed_at": row.last_parsed_at,
+            "last_size_bytes": row.last_size,
+        }
+        for row in files
+    ]
+
+    all_rirs = sorted(set(ip_counts) | set(asn_counts) | set(fetched_at))
+    summary_by_rir = [
+        {
+            "rir": r,
+            "ip_allocations": ip_counts.get(r, 0),
+            "asn_allocations": asn_counts.get(r, 0),
+            "last_fetched_at": fetched_at.get(r),
+        }
+        for r in all_rirs
+    ]
+
+    return {
+        "recent_runs": recent_runs,
+        "sources": sources,
+        "summary_by_rir": summary_by_rir,
+        "db_alive": db_alive,
+    }
+
+
+def _render_status_tables(payload: dict[str, Any]) -> None:
+    """Rich-table вывод payload'а из ``_collect_status``."""
     console = Console()
 
     runs_table = Table(title="Recent sync_run (last 5)")
     for col in ("ID", "Tier", "Started", "Finished", "Status", "RPSL records", "Error"):
         runs_table.add_column(col)
-    for row in runs:
-        rpsl_total = _rpsl_records_from_stats(row.stats)
+    for run in payload["recent_runs"]:
+        rpsl_total = run.get("rpsl_records")
         runs_table.add_row(
-            str(row.id),
-            row.tier,
-            _fmt_dt(row.started_at),
-            _fmt_dt(row.finished_at),
-            row.status,
+            str(run["id"]),
+            run["tier"],
+            _fmt_dt(run["started_at"]),
+            _fmt_dt(run["finished_at"]),
+            run["status"],
             "" if rpsl_total is None else str(rpsl_total),
-            (row.error or "")[:60],
+            (run.get("error") or "")[:60],
         )
     console.print(runs_table)
 
     files_table = Table(title="sync_file (by last_fetched_at DESC)")
     for col in ("URL", "RIR", "Kind", "Last status", "Fetched at"):
         files_table.add_column(col)
-    for row in files:
+    for src in payload["sources"]:
         files_table.add_row(
-            row.url,
-            row.rir,
-            row.kind,
-            row.last_status,
-            _fmt_dt(row.last_fetched_at),
+            src["url"],
+            src["rir"],
+            src["kind"],
+            src["last_status"],
+            _fmt_dt(src["last_fetched_at"]),
         )
     console.print(files_table)
 
