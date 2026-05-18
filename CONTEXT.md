@@ -27,6 +27,15 @@
 
 **Stage 1: Core sync + minimal API — ЗАКРЫТ ✅ (2026-05-18).**
 **Stage 1.50: Стабилизация — ЗАКРЫТА ✅ (2026-05-18).**
+**Stage 2 в работе. Шаг 2-01 закрыт (RPSL parser).**
+
+Stage 2 разбит на 6 шагов:
+- 2-01 ✅ RPSL parser (`parsers/rpsl.py`, 18 тестов).
+- 2-02 ⏳ миграция `rpsl_tables` (per-RIR таблицы).
+- 2-03 ⏳ RPSL ETL.
+- 2-04 ⏳ расширение API (поле `rpsl` в ответах).
+- 2-05 ⏳ ARIN IRR tier.
+- 2-06 ⏳ RDAP fallback (опционально).
 
 После Stage 1 прошёл короткий блок «стабилизация перед Stage 2»
 (6 задач, `01-50-stabilization.md`):
@@ -185,14 +194,12 @@ Live sync: 760k записей, 647k IP allocation + 113k ASN, ~102 секунд
 
 ## Что делать дальше (Stage 1)
 
-**Stage 1 + 1.50 закрыты. Stage 2 — RPSL rich-tier.**
+**Stage 2 шаг 2-02 — миграция `rpsl_tables`.** Полный план Stage 2 — `docs/08-roadmap.md`. Ключевые блоки:
 
-Полный план — `docs/08-roadmap.md` § Stage 2. Ключевые блоки:
-
-1. **Парсер RPSL** (`parsers/rpsl.py`) — общий потоковый,
-   gzip-stream. Объекты разделены пустой строкой; continuation lines
-   через space/tab/`+`; повторяющиеся атрибуты → массив. Спецификация
-   в `docs/05-parsers.md` § «RPSL».
+1. ~~**Парсер RPSL** (`parsers/rpsl.py`) — общий потоковый,
+   gzip-stream.~~ ✅ Шаг 2-01 закрыт. 18 unit-тестов; continuation
+   через space; lowercase keys; first-key — primary attribute.
+   Детали: `.claude/session-log/02-01b-rpsl-parser-impl.md`.
 2. **Per-RIR таблицы** — миграция `0002_rpsl_tables`. Скелет
    `ripe_inetnum` уже в `docs/03`. Аналогично для apnic/afrinic;
    ARIN — отдельная история (см. ниже).
