@@ -59,22 +59,24 @@ jobs:
       - name: lint systemd units
         run: |
           # systemd-analyze verify — статический syntax check unit-файлов.
-          # Подставляем dummy User=root и убираем ConditionPathExists,
-          # потому что на CI runner'е rir2local юзера нет и venv не
-          # существует — иначе verify падает.
+          # Подставляем dummy User=root и убираем ConditionPathExists/
+          # EnvironmentFile, потому что на CI runner'е rir2local юзера
+          # нет, venv не существует, /etc/rir2localdb/serve.env тоже.
           mkdir -p /tmp/systemd-lint
-          sed -e 's/^User=.*/User=root/' \
-              -e 's/^Group=.*/Group=root/' \
-              -e '/^ConditionPathExists=/d' \
-              -e 's|^WorkingDirectory=.*|WorkingDirectory=/tmp|' \
-              -e 's|^ExecStart=.*|ExecStart=/bin/true|' \
-              -e 's|^ReadWritePaths=.*|ReadWritePaths=/tmp|' \
-              deploy/systemd/rir2localdb-sync.service \
-              > /tmp/systemd-lint/rir2localdb-sync.service
+          for unit in rir2localdb-sync.service rir2localdb-serve.service; do
+            sed -e 's/^User=.*/User=root/' \
+                -e 's/^Group=.*/Group=root/' \
+                -e '/^ConditionPathExists=/d' \
+                -e 's|^WorkingDirectory=.*|WorkingDirectory=/tmp|' \
+                -e 's|^ExecStart=.*|ExecStart=/bin/true|' \
+                -e 's|^ReadWritePaths=.*|ReadWritePaths=/tmp|' \
+                -e '/^EnvironmentFile=/d' \
+                deploy/systemd/$unit > /tmp/systemd-lint/$unit
+          done
           cp deploy/systemd/rir2localdb-sync.timer /tmp/systemd-lint/
           systemd-analyze verify \
-            /tmp/systemd-lint/rir2localdb-sync.service \
-            /tmp/systemd-lint/rir2localdb-sync.timer
+            /tmp/systemd-lint/*.service \
+            /tmp/systemd-lint/*.timer
 
       - name: alembic round-trip
         run: |
