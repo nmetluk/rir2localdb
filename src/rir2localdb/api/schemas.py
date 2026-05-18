@@ -13,6 +13,117 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
+# ---------------------------------------------------------------------------
+# RPSL-обогащение (Stage 2).
+#
+# Семантика блоков: если клиент запросил ``?include_rpsl=true`` (default),
+# в ответе всегда есть объект ``rpsl`` — но его поля ``inetnum`` /
+# ``organisation`` / ``aut_num`` могут быть ``null`` (RPSL для адреса не
+# нашли, либо org_handle висит orphan'ом). Если клиент явно поставил
+# ``?include_rpsl=false`` — поле ``rpsl`` целиком ``null``. Это даёт
+# различимое «не запросили» vs «запросили и не нашли».
+# ---------------------------------------------------------------------------
+
+
+class RpslInetnum(BaseModel):
+    """Запись из таблицы ``inetnum`` (IPv4)."""
+
+    rir: str
+    start: str
+    value: int
+    """Число адресов диапазона (IPv4)."""
+    netname: str | None = None
+    country: str | None = None
+    descr: str | None = None
+    org: str | None = None
+    """``org-handle``; может оказаться orphan (нет строки в ``organisation``)."""
+    admin_c: list[str] | None = None
+    tech_c: list[str] | None = None
+    status: str | None = None
+    mnt_by: list[str] | None = None
+    created: datetime | None = None
+    last_modified: datetime | None = None
+    source: str | None = None
+
+
+class RpslInet6num(BaseModel):
+    """Запись из таблицы ``inet6num`` (IPv6)."""
+
+    rir: str
+    start: str
+    value: int
+    """Длина префикса (0..128)."""
+    netname: str | None = None
+    country: str | None = None
+    descr: str | None = None
+    org: str | None = None
+    admin_c: list[str] | None = None
+    tech_c: list[str] | None = None
+    status: str | None = None
+    mnt_by: list[str] | None = None
+    created: datetime | None = None
+    last_modified: datetime | None = None
+    source: str | None = None
+
+
+class RpslAutNum(BaseModel):
+    """Запись из таблицы ``aut_num``."""
+
+    rir: str
+    asn: int
+    as_name: str | None = None
+    descr: str | None = None
+    org: str | None = None
+    admin_c: list[str] | None = None
+    tech_c: list[str] | None = None
+    status: str | None = None
+    mnt_by: list[str] | None = None
+    created: datetime | None = None
+    last_modified: datetime | None = None
+    source: str | None = None
+
+
+class RpslOrganisation(BaseModel):
+    """Запись из таблицы ``organisation``.
+
+    Поле ``email`` соответствует SQL-колонке ``email`` (хранит значения
+    RPSL-атрибута ``e-mail:``, нормализованного на ETL'е).
+    """
+
+    rir: str
+    org_handle: str
+    org_name: str | None = None
+    org_type: str | None = None
+    abuse_c: str | None = None
+    address: list[str] | None = None
+    phone: list[str] | None = None
+    email: list[str] | None = None
+    fax_no: list[str] | None = None
+    mnt_ref: list[str] | None = None
+    mnt_by: list[str] | None = None
+    created: datetime | None = None
+    last_modified: datetime | None = None
+    source: str | None = None
+
+
+class IpRpslBlock(BaseModel):
+    """RPSL-обогащение IP-ответа: ``inetnum`` (или ``inet6num``) + ``organisation``."""
+
+    inetnum: RpslInetnum | RpslInet6num | None = None
+    organisation: RpslOrganisation | None = None
+
+
+class AsnRpslBlock(BaseModel):
+    """RPSL-обогащение ASN-ответа: ``aut_num`` + ``organisation``."""
+
+    aut_num: RpslAutNum | None = None
+    organisation: RpslOrganisation | None = None
+
+
+# ---------------------------------------------------------------------------
+# Базовые lookup-ответы (Stage 1 + rpsl-расширение из Stage 2).
+# ---------------------------------------------------------------------------
+
 
 class IpLookupResponse(BaseModel):
     """``GET /v1/ip/{addr}``."""
@@ -33,6 +144,9 @@ class IpLookupResponse(BaseModel):
     opaque_id: str | None
     first_seen_run: int
     last_seen_run: int
+    rpsl: IpRpslBlock | None = None
+    """``None`` если ``?include_rpsl=false``. Иначе — блок (с возможно
+    ``None``-полями, если RPSL-данных нет)."""
 
 
 class AsnLookupResponse(BaseModel):
@@ -48,6 +162,9 @@ class AsnLookupResponse(BaseModel):
     opaque_id: str | None
     first_seen_run: int
     last_seen_run: int
+    rpsl: AsnRpslBlock | None = None
+    """``None`` если ``?include_rpsl=false``. Иначе — блок (с возможно
+    ``None``-полями, если RPSL-данных нет)."""
 
 
 class RirSummary(BaseModel):
