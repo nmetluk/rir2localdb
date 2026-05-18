@@ -86,6 +86,26 @@ def migrate(
 
 
 @app.command()
+def serve(
+    host: Annotated[
+        str,
+        typer.Option("--host", help="Адрес bind. По умолчанию 127.0.0.1."),
+    ] = "127.0.0.1",
+    port: Annotated[
+        int,
+        typer.Option("--port", "-p", help="Порт. По умолчанию 8000."),
+    ] = 8000,
+) -> None:
+    """Запустить HTTP API через uvicorn."""
+    import uvicorn
+
+    from rir2localdb.api.app import make_app
+
+    configure_logging()
+    uvicorn.run(make_app(), host=host, port=port)
+
+
+@app.command()
 def gc() -> None:
     """Cleanup stale rows (placeholder, реализация — Stage 3 ops)."""
     typer.echo(
