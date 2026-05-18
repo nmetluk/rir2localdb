@@ -60,6 +60,9 @@ curl -s http://127.0.0.1:8000/v1/asn/3333 | python -m json.tool
 # Опционально отключить RPSL-обогащение для bandwidth-sensitive клиентов:
 curl -s 'http://127.0.0.1:8000/v1/ip/8.8.8.8?include_rpsl=false' | python -m json.tool
 
+# 10. CLI status в JSON-формате (для cron / мониторинга):
+rir2localdb status --json | jq '.recent_runs[0].status'
+
 # OpenAPI docs:
 # http://127.0.0.1:8000/docs
 ```

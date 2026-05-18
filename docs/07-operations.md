@@ -1,5 +1,29 @@
 # 07 · Эксплуатация
 
+## CLI status: rich vs JSON
+
+По умолчанию `rir2localdb status` печатает две `rich.Table`
+(`Recent sync_run` + `sync_file`) — для человека в терминале.
+
+С флагом `--json` отдаёт machine-readable JSON со схемой
+`{recent_runs, sources, summary_by_rir, db_alive}` — структура
+совпадает с HTTP endpoint'ом `/v1/status`. Удобно для cron-скриптов,
+мониторинга и алертинга:
+
+```bash
+# последний run прошёл успешно?
+rir2localdb status --json | jq -e '.recent_runs[0].status == "success"'
+
+# RPSL records за последний run
+rir2localdb status --json | jq '.recent_runs[0].rpsl_records'
+
+# суммарно записей по RIR
+rir2localdb status --json | jq '.summary_by_rir[] | "\(.rir): ip=\(.ip_allocations) asn=\(.asn_allocations)"'
+```
+
+DB недоступна — `--json` всё равно отвечает `{... "db_alive": false}`
+с exit 0, чтобы скрипт сам решил эскалировать.
+
 ## Локальная разработка
 
 ```bash
