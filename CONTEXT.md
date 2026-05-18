@@ -27,12 +27,12 @@
 
 **Stage 1: Core sync + minimal API — ЗАКРЫТ ✅ (2026-05-18).**
 **Stage 1.50: Стабилизация — ЗАКРЫТА ✅ (2026-05-18).**
-**Stage 2 в работе. Шаг 2-01 закрыт (RPSL parser).**
+**Stage 2 в работе. Шаги 2-01 и 2-02 закрыты.**
 
 Stage 2 разбит на 6 шагов:
 - 2-01 ✅ RPSL parser (`parsers/rpsl.py`, 18 тестов).
-- 2-02 ⏳ миграция `rpsl_tables` (per-RIR таблицы).
-- 2-03 ⏳ RPSL ETL.
+- 2-02 ✅ миграция `0002_rpsl_tables` (8 таблиц, ADR-0007).
+- 2-03 ⏳ RPSL ETL (`etl/rpsl_etl.py`) — следующий.
 - 2-04 ⏳ расширение API (поле `rpsl` в ответах).
 - 2-05 ⏳ ARIN IRR tier.
 - 2-06 ⏳ RDAP fallback (опционально).
@@ -194,13 +194,18 @@ Live sync: 760k записей, 647k IP allocation + 113k ASN, ~102 секунд
 
 ## Что делать дальше (Stage 1)
 
-**Stage 2 шаг 2-02 — миграция `rpsl_tables`.** Полный план Stage 2 — `docs/08-roadmap.md`. Ключевые блоки:
+**Stage 2 шаг 2-03 — RPSL ETL.** Полный план Stage 2 — `docs/08-roadmap.md`. Ключевые блоки:
 
 1. ~~**Парсер RPSL** (`parsers/rpsl.py`) — общий потоковый,
    gzip-stream.~~ ✅ Шаг 2-01 закрыт. 18 unit-тестов; continuation
    через space; lowercase keys; first-key — primary attribute.
    Детали: `.claude/session-log/02-01b-rpsl-parser-impl.md`.
-2. **Per-RIR таблицы** — миграция `0002_rpsl_tables`. Скелет
+2. ~~**Per-RIR таблицы** — миграция `0002_rpsl_tables`.~~ ✅ Шаг 2-02
+   закрыт. ADR-0007 утвердил вариант «one table per object type»;
+   8 таблиц + GiST на range-колонках; partial-индексы на
+   org/country/abuse_c. Round-trip clean. Детали:
+   `.claude/session-log/02-02-rpsl-tables-migration.md`.
+2b. (изначальный пункт 2 был про другую структуру — закрыт)
    `ripe_inetnum` уже в `docs/03`. Аналогично для apnic/afrinic;
    ARIN — отдельная история (см. ниже).
 3. **ETL для split-дампов** (`etl/rpsl_etl.py`). RIPE inet6num
