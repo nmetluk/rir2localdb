@@ -5,19 +5,26 @@ Commands:
     rir2localdb status
     rir2localdb migrate [--revision REV]
     rir2localdb gc
-
-Skeleton stage (step 7 phase A): typer-структура и сигнатуры
-зафиксированы, тела команд — ``raise NotImplementedError``.
-Заполняются в фазе B (см. ``.claude/session-log/01-07b-...``).
 """
 
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
 from typing import Annotated
 
+import alembic.command
+import alembic.config
 import typer
+from rich.console import Console
+from rich.table import Table
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
 
+from rir2localdb.config import Settings, get_settings
+from rir2localdb.logging_setup import configure_logging
 from rir2localdb.sources import Tier
+from rir2localdb.sync.orchestrator import SyncRunSummary, run_sync
 
 app = typer.Typer(
     name="rir2localdb",
@@ -33,8 +40,7 @@ def sync(
         typer.Option(
             "--tier",
             "-t",
-            help="Tier для обработки. Можно указывать несколько раз. "
-            "По умолчанию: core.",
+            help="Tier для обработки. Можно указывать несколько раз. По умолчанию: core.",
             case_sensitive=False,
         ),
     ] = None,
@@ -47,29 +53,151 @@ def sync(
     ] = False,
 ) -> None:
     """Запустить один sync-run по заданным тирам."""
-    raise NotImplementedError("sync command — stage 1 step 7 phase B")
+    configure_logging()
+    settings = get_settings()
+    tier_list = tier or [Tier.CORE]
+    summary = asyncio.run(run_sync(tier_list, settings, dry_run=dry_run))
+    _print_summary(summary, dry_run=dry_run)
+    if summary.status == "failed":
+        raise typer.Exit(code=1)
 
 
 @app.command()
 def status() -> None:
     """Показать последние 5 sync_run и текущее состояние sync_file."""
-    raise NotImplementedError("status command — stage 1 step 7 phase B")
+    configure_logging(level="WARNING")  # CLI status — без INFO-шума
+    settings = get_settings()
+    asyncio.run(_print_status(settings))
 
 
 @app.command()
 def migrate(
     revision: Annotated[
         str,
-        typer.Option(
-            "--revision", "-r", help="Alembic revision (по умолчанию head)."
-        ),
+        typer.Option("--revision", "-r", help="Alembic revision (по умолчанию head)."),
     ] = "head",
 ) -> None:
     """Применить ``alembic upgrade`` до указанной revision."""
-    raise NotImplementedError("migrate command — stage 1 step 7 phase B")
+    configure_logging()
+    settings = get_settings()
+    cfg = _alembic_config(settings)
+    alembic.command.upgrade(cfg, revision)
+    typer.echo(f"alembic upgrade {revision} — done")
 
 
 @app.command()
 def gc() -> None:
     """Cleanup stale rows (placeholder, реализация — Stage 3 ops)."""
-    raise NotImplementedError("gc command — stage 3 ops")
+    typer.echo(
+        "gc: placeholder. Stale-row cleanup is planned for Stage 3 ops; "
+        "in Stage 1 stale rows just stay with an older `last_seen_run`."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _alembic_config(settings: Settings) -> alembic.config.Config:
+    """Собрать ``alembic.config.Config`` без файла ``alembic.ini``.
+
+    ``script_location`` резолвится через ``__file__`` относительно
+    repo root: ``src/rir2localdb/cli.py`` → ``parents[2]`` → repo
+    root → ``migrations/``. Этот путь работает для ``pip install -e .``;
+    wheel-packaging требует переключения на ``importlib.resources``
+    (см. CONTEXT.md, открытые вопросы).
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    cfg = alembic.config.Config()
+    cfg.set_main_option("script_location", str(repo_root / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", settings.database_url)
+    return cfg
+
+
+def _print_summary(summary: SyncRunSummary, *, dry_run: bool) -> None:
+    """Печать сводки sync-run'а в stdout."""
+    prefix = "[dry-run] " if dry_run else ""
+    typer.echo(f"{prefix}sync_run id={summary.run_id} status={summary.status}")
+    typer.echo(
+        f"  files: total={summary.files_total} "
+        f"new={summary.files_fetched_new} "
+        f"updated={summary.files_fetched_updated} "
+        f"unchanged={summary.files_unchanged} "
+        f"errored={summary.files_errored}"
+    )
+    typer.echo(
+        f"  parser: records_total={summary.parser_records_total}"
+    )
+    typer.echo(
+        f"  etl ip:  inserted={summary.etl_ip_inserted} "
+        f"updated={summary.etl_ip_updated}"
+    )
+    typer.echo(
+        f"  etl asn: inserted={summary.etl_asn_inserted} "
+        f"updated={summary.etl_asn_updated}"
+    )
+    typer.echo(f"  duration: {summary.duration_ms} ms")
+    if summary.error:
+        typer.echo(f"  error: {summary.error}", err=True)
+
+
+async def _print_status(settings: Settings) -> None:
+    """Две таблицы: последние sync_run и sync_file."""
+    engine = create_async_engine(settings.database_url)
+    try:
+        async with engine.connect() as conn:
+            runs = (
+                await conn.execute(
+                    text(
+                        "SELECT id, tier, started_at, finished_at, status, error "
+                        "FROM sync_run ORDER BY id DESC LIMIT 5"
+                    )
+                )
+            ).all()
+            files = (
+                await conn.execute(
+                    text(
+                        "SELECT url, rir, kind, last_status, last_fetched_at "
+                        "FROM sync_file ORDER BY last_fetched_at DESC NULLS LAST"
+                    )
+                )
+            ).all()
+    finally:
+        await engine.dispose()
+
+    console = Console()
+
+    runs_table = Table(title="Recent sync_run (last 5)")
+    for col in ("ID", "Tier", "Started", "Finished", "Status", "Error"):
+        runs_table.add_column(col)
+    for row in runs:
+        runs_table.add_row(
+            str(row.id),
+            row.tier,
+            _fmt_dt(row.started_at),
+            _fmt_dt(row.finished_at),
+            row.status,
+            (row.error or "")[:60],
+        )
+    console.print(runs_table)
+
+    files_table = Table(title="sync_file (by last_fetched_at DESC)")
+    for col in ("URL", "RIR", "Kind", "Last status", "Fetched at"):
+        files_table.add_column(col)
+    for row in files:
+        files_table.add_row(
+            row.url,
+            row.rir,
+            row.kind,
+            row.last_status,
+            _fmt_dt(row.last_fetched_at),
+        )
+    console.print(files_table)
+
+
+def _fmt_dt(value: object) -> str:
+    """``datetime`` → ISO-строка; ``None`` → пустая."""
+    if value is None:
+        return ""
+    return str(value)
