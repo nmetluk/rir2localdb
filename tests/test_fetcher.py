@@ -332,6 +332,32 @@ async def test_4xx_main_file_returns_error_no_retry(tmp_path: Path) -> None:
     assert log.hits(SAMPLE_URL) == 1
 
 
+async def test_md5_sidecar_bsd_format_parsed(tmp_path: Path) -> None:
+    """RIPE отдаёт md5 в BSD-формате: ``MD5 (<file>) = <hash>``.
+
+    Parser должен извлечь hash regex'ом, не споткнувшись на префиксе.
+    """
+    log = _RequestLog()
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        log.record(req)
+        if str(req.url) == SAMPLE_MD5_URL:
+            return httpx.Response(200, text=f"MD5 (delegated) = {EXPECTED_MD5}\n")
+        return httpx.Response(404)
+
+    # previous.last_md5 совпадает с BSD-формат md5 → tier 1 UNCHANGED.
+    previous = PreviousFetchState(last_md5=EXPECTED_MD5)
+    async with _make_client(handler) as client:
+        result = await fetch(
+            client, _sample_source(), previous, _settings(tmp_path), sleep=_no_sleep
+        )
+
+    assert result.status == FetchStatus.UNCHANGED
+    assert result.tier_used == 1
+    assert result.md5_sidecar == EXPECTED_MD5
+    assert log.hits(SAMPLE_URL) == 0
+
+
 async def test_404_md5_sidecar_falls_through_to_tier2(tmp_path: Path) -> None:
     """md5 sidecar отдал 404 — tier 1 пропускается, основной GET работает нормально."""
     log = _RequestLog()

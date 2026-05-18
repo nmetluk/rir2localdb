@@ -37,6 +37,7 @@ import contextlib
 import hashlib
 import logging
 import os
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -53,6 +54,12 @@ from rir2localdb.sources import Source
 PROJECT_HOMEPAGE: Final[str] = "https://github.com/nmetluk/rir2localdb"
 _BACKOFF_BASE: Final[float] = 2.0
 _BACKOFF_MAX_DELAY: Final[float] = 60.0
+
+# Любая 32-hex последовательность, не граничащая с другим hex-символом.
+# Покрывает GNU `<hash>  <file>`, single-space, bare `<hash>`, и BSD
+# `MD5 (<file>) = <hash>`. ``\b`` корректен потому что hex-чары —
+# word-chars в regex, и 64-hex sha256 не даст false positive.
+_MD5_HEX_RE: Final[re.Pattern[str]] = re.compile(r"\b[0-9a-fA-F]{32}\b")
 
 logger = logging.getLogger(__name__)
 
@@ -346,10 +353,12 @@ async def _fetch_md5_sidecar(
     """Скачать ``.md5``-сосед и вернуть распарсенный хэш.
 
     Формат md5-файла у RIR'ов варьируется:
-        - ``"<32hex>  <filename>\\n"`` (стандарт ``md5sum -b``),
+        - ``"<32hex>  <filename>\\n"`` (GNU ``md5sum -b``),
         - ``"<32hex> <filename>\\n"`` (одиночный пробел),
-        - ``"<32hex>\\n"`` (bare хэш).
-    Берём первый whitespace-токен и валидируем как 32-hex.
+        - ``"<32hex>\\n"`` (bare хэш),
+        - ``"MD5 (<filename>) = <32hex>\\n"`` (BSD-формат, RIPE).
+    Извлекаем через regex: первая 32-hex последовательность с
+    word-boundaries — единственный значимый токен во всех форматах.
 
     Returns:
         Hex-хэш в нижнем регистре или ``None``, если sidecar отдал ``404``.
@@ -370,11 +379,11 @@ async def _fetch_md5_sidecar(
             return None
         raise
 
-    text = response.text.strip()
-    token = text.split(None, 1)[0] if text else ""
-    if len(token) == 32 and all(c in "0123456789abcdefABCDEF" for c in token):
-        return token.lower()
-    raise FetchError(f"md5 sidecar {md5_url}: cannot parse {text[:80]!r}")
+    body = response.text.strip()
+    match = _MD5_HEX_RE.search(body)
+    if match:
+        return match.group(0).lower()
+    raise FetchError(f"md5 sidecar {md5_url}: cannot parse {body[:80]!r}")
 
 
 async def _conditional_get(
