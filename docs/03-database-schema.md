@@ -144,13 +144,14 @@ CREATE INDEX asn_allocation_range_gist ON asn_allocation USING gist (asn_range);
 CREATE INDEX asn_allocation_start      ON asn_allocation (start_asn);
 ```
 
-### RPSL-таблицы (Stage 2)
+### RPSL-таблицы (Stage 2 + 2.50)
 
 **Одна таблица на тип объекта**, ``rir`` колонка как discriminator
 (см. ADR-0007). Партиционирование через ``PARTITION BY LIST (rir)`` —
-future work, прозрачно для API. Миграция `0002_rpsl_tables`.
+future work, прозрачно для API. Миграции `0002_rpsl_tables` (8 таблиц
+Stage 2-02) + `0003_more_rpsl_tables` (3 таблицы Stage 2.50 § A).
 
-Восемь таблиц в Stage 2 § 2-02:
+Всего 11 таблиц:
 
 | Таблица | Primary key | Range column (GiST) | Назначение |
 |---|---|---|---|
@@ -162,6 +163,17 @@ future work, прозрачно для API. Миграция `0002_rpsl_tables`.
 | `route6` | `(rir, prefix, origin)` | `prefix cidr` | IPv6 IRR-маршруты |
 | `as_block` | `(rir, as_block_start, as_block_end)` | `asn_range int8range` | RPSL ASN-блок |
 | `role` | `(rir, nic_hdl)` | — | контактная роль |
+| `mntner` | `(rir, mntner)` | — | maintainer (target `mnt-by`) |
+| `person` | `(rir, nic_hdl)` | — | контактное физлицо (target `admin-c`/`tech-c`) |
+| `as_set` | `(rir, as_set)` | — | routing-policy set (RFC 2622 § 5) |
+
+**`rir` column convention.** Все 11 RPSL-таблиц + `ip_allocation` +
+`asn_allocation` хранят `rir` в **canonical NRO registry names**:
+`afrinic`, `apnic`, `arin`, `lacnic`, `ripencc`. RIPE NCC = `ripencc`
+(NRO standard), не `ripe`. До Stage 2.50 § B было расхождение
+(`Rir.RIPE.value="ripe"` для RPSL vs NRO `"ripencc"` для delegated);
+миграция `0004_normalize_rir_ripe_to_ripencc` нормализовала
+existing rows и Rir enum обновлён.
 
 Скелет ``inetnum``-таблицы:
 
