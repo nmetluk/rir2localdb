@@ -1,0 +1,25 @@
+# Minimal Prometheus config для rir2localdb observability stack.
+# Использовать вместе с deploy/prometheus/alerts.yml и docker-compose.observability.yml.
+
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+scrape_configs:
+  - job_name: rir2localdb
+    metrics_path: /v1/metrics
+    static_configs:
+      - targets:
+          - api:8000      # docker-compose service name
+        # При деплое на bare metal с systemd — замените на:
+        # - "host.docker.internal:8000"  (если Prometheus в Docker и API на хосте)
+        # - "<host-ip>:8000"             (для разных машин)

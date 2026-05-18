@@ -1,0 +1,138 @@
+groups:
+  # ---------------------------------------------------------------------------
+  # Sync lifecycle: timely daily run + success + sane duration.
+  # ---------------------------------------------------------------------------
+  - name: rir2localdb_sync
+    interval: 1m
+    rules:
+      - alert: SyncStale
+        expr: time() - rir2localdb_last_sync_run_finished_timestamp_seconds > 36 * 3600
+        for: 5m
+        labels:
+          severity: warning
+          service: rir2localdb
+        annotations:
+          summary: "rir2localdb sync stale (>36h since last finished run)"
+          description: |
+            Daily timer should fire every ~24h. Threshold 36h includes
+            ~12h grace for failed/delayed runs. Check journald:
+              journalctl -u rir2localdb-sync -n 100
+
+      - alert: SyncStaleCritical
+        expr: time() - rir2localdb_last_sync_run_finished_timestamp_seconds > 72 * 3600
+        for: 5m
+        labels:
+          severity: critical
+          service: rir2localdb
+        annotations:
+          summary: "rir2localdb sync stale >72h — pipeline is broken"
+
+      - alert: SyncFailed
+        expr: rir2localdb_last_sync_run_status == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: rir2localdb
+        annotations:
+          summary: "rir2localdb last sync_run finished with status=failed"
+          description: |
+            Check sync_run.error for cause:
+              rir2localdb status --json | jq '.recent_runs[0].error'
+
+      - alert: SyncDurationDegrading
+        expr: rir2localdb_last_sync_run_duration_seconds > 30 * 60
+        for: 5m
+        labels:
+          severity: warning
+          service: rir2localdb
+        annotations:
+          summary: "rir2localdb sync took >30min"
+          description: |
+            Baseline: incremental ~8.5 min, first/major ~24 min.
+            Sustained >30 min — investigate RIR mirror speed or DB lock contention.
+
+  # ---------------------------------------------------------------------------
+  # Data volumes + source freshness.
+  # ---------------------------------------------------------------------------
+  - name: rir2localdb_data
+    interval: 5m
+    rules:
+      - alert: TableShrinking
+        expr: |
+          rir2localdb_table_rows -
+          rir2localdb_table_rows offset 1h < -1000
+        for: 10m
+        labels:
+          severity: warning
+          service: rir2localdb
+        annotations:
+          summary: "Table {{ $labels.table }} shrunk by >1000 rows in last hour"
+          description: |
+            Sudden row-count drop usually means corrupted upstream dump
+            or ETL bug. Investigate before next sync run.
+
+      - alert: SourceStale
+        expr: time() - rir2localdb_source_last_fetched_timestamp_seconds > 48 * 3600
+        for: 30m
+        labels:
+          severity: warning
+          service: rir2localdb
+        annotations:
+          summary: "Source {{ $labels.url }} not fetched in 48h"
+          description: |
+            RIR mirror down or network blocked? Check connectivity and
+            sync_file.last_status for this URL.
+
+  # ---------------------------------------------------------------------------
+  # HTTP API health.
+  # ---------------------------------------------------------------------------
+  - name: rir2localdb_api
+    interval: 1m
+    rules:
+      - alert: APIHighErrorRate
+        expr: |
+          sum(rate(rir2localdb_http_requests_total{status=~"5.."}[5m]))
+            /
+          sum(rate(rir2localdb_http_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: rir2localdb
+        annotations:
+          summary: "rir2localdb API 5xx rate >5% over 5 minutes"
+
+      - alert: APISlowLookups
+        expr: |
+          histogram_quantile(0.95,
+            sum by (endpoint, le) (
+              rate(rir2localdb_http_request_duration_seconds_bucket{endpoint=~"/v1/ip/.*|/v1/asn/.*"}[5m])
+            )
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+          service: rir2localdb
+        annotations:
+          summary: "rir2localdb API p95 lookup latency >1s on {{ $labels.endpoint }}"
+
+  # ---------------------------------------------------------------------------
+  # RDAP fallback health (only relevant if RIR2LOCALDB_RDAP_FALLBACK_ENABLED=true).
+  # ---------------------------------------------------------------------------
+  - name: rir2localdb_rdap
+    interval: 5m
+    rules:
+      - alert: RDAPHighMissRate
+        expr: |
+          sum(rate(rir2localdb_rdap_lookups_total{cached="false"}[5m])) > 1
+        for: 15m
+        labels:
+          severity: warning
+          service: rir2localdb
+        annotations:
+          summary: "RDAP cache miss rate >1 req/s sustained 15min"
+          description: |
+            ARIN RDAP rate-limit ~50/min = 0.83 req/s. Sustained miss
+            above that risks 429-throttling. Causes:
+              - rdap_cache_ttl_hours too short
+              - cache table truncated / DB rolled back
+              - unusual traffic pattern hitting many uncached blocks
