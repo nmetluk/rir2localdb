@@ -356,7 +356,8 @@ async def test_rich_tier_routes_to_rpsl_etl(
 
     inetnum_rows = await clean_db.fetch("SELECT rir, netname FROM inetnum")
     assert len(inetnum_rows) == 1
-    assert inetnum_rows[0]["rir"] == "ripe"
+    # Stage 2.50 § B: Rir.RIPE.value normalized to "ripencc".
+    assert inetnum_rows[0]["rir"] == "ripencc"
     assert inetnum_rows[0]["netname"] == "RIPE-NCC"
 
     org_rows = await clean_db.fetch("SELECT org_handle, org_name FROM organisation")

@@ -167,7 +167,7 @@ async def _seed_inetnum(
     conn: asyncpg.Connection,
     run_id: int,
     *,
-    rir: str = "ripe",
+    rir: str = "ripencc",
     start: str = "193.0.0.0",
     value: int = 256,
     netname: str | None = "RIPE-NCC",
@@ -212,7 +212,7 @@ async def _seed_inet6num(
     conn: asyncpg.Connection,
     run_id: int,
     *,
-    rir: str = "ripe",
+    rir: str = "ripencc",
     start: str = "2001:db8::",
     prefix: int = 32,
     netname: str | None = "TEST-NET-V6",
@@ -248,7 +248,7 @@ async def _seed_aut_num(
     conn: asyncpg.Connection,
     run_id: int,
     *,
-    rir: str = "ripe",
+    rir: str = "ripencc",
     asn: int = 3333,
     as_name: str | None = "RIPE-NCC-AS",
     descr: str | None = "RIPE NCC",
@@ -279,7 +279,7 @@ async def _seed_organisation(
     conn: asyncpg.Connection,
     run_id: int,
     *,
-    rir: str = "ripe",
+    rir: str = "ripencc",
     org_handle: str = "ORG-RIEN1-RIPE",
     org_name: str | None = "Reseaux IP Europeens Network Coordination Centre",
     org_type: str | None = "RIR",
@@ -522,8 +522,8 @@ async def test_ip_lookup_with_rpsl_inetnum_only(
     """inetnum есть, organisation отсутствует → rpsl.inetnum != None,
     rpsl.organisation == None."""
     run_id = await _seed_sync_run(clean_db)
-    await _seed_ipv4(clean_db, run_id, rir="ripe", start="193.0.0.0", value=256)
-    await _seed_inetnum(clean_db, run_id, rir="ripe", start="193.0.0.0", value=256)
+    await _seed_ipv4(clean_db, run_id, rir="ripencc", start="193.0.0.0", value=256)
+    await _seed_inetnum(clean_db, run_id, rir="ripencc", start="193.0.0.0", value=256)
     # без organisation
 
     response = await api_client.get("/v1/ip/193.0.0.5")
@@ -540,9 +540,9 @@ async def test_ip_lookup_with_rpsl_full(
 ) -> None:
     """inetnum + organisation → оба заполнены."""
     run_id = await _seed_sync_run(clean_db)
-    await _seed_ipv4(clean_db, run_id, rir="ripe", start="193.0.0.0", value=256)
-    await _seed_inetnum(clean_db, run_id, rir="ripe", start="193.0.0.0", value=256)
-    await _seed_organisation(clean_db, run_id, rir="ripe", org_handle="ORG-RIEN1-RIPE")
+    await _seed_ipv4(clean_db, run_id, rir="ripencc", start="193.0.0.0", value=256)
+    await _seed_inetnum(clean_db, run_id, rir="ripencc", start="193.0.0.0", value=256)
+    await _seed_organisation(clean_db, run_id, rir="ripencc", org_handle="ORG-RIEN1-RIPE")
 
     response = await api_client.get("/v1/ip/193.0.0.5")
     assert response.status_code == 200
@@ -557,8 +557,8 @@ async def test_ip_lookup_with_rpsl_full(
 async def test_ip_lookup_inet6num(api_client: AsyncClient, clean_db: asyncpg.Connection) -> None:
     """IPv6 lookup попадает в inet6num, value=prefix_length."""
     run_id = await _seed_sync_run(clean_db)
-    await _seed_ipv6(clean_db, run_id, rir="ripe", start="2001:db8::", prefix=32)
-    await _seed_inet6num(clean_db, run_id, rir="ripe", start="2001:db8::", prefix=32)
+    await _seed_ipv6(clean_db, run_id, rir="ripencc", start="2001:db8::", prefix=32)
+    await _seed_inet6num(clean_db, run_id, rir="ripencc", start="2001:db8::", prefix=32)
 
     response = await api_client.get("/v1/ip/2001:db8::1")
     assert response.status_code == 200
@@ -590,9 +590,9 @@ async def test_ip_lookup_include_rpsl_false(
 ) -> None:
     """?include_rpsl=false → rpsl целиком null, даже когда данные есть."""
     run_id = await _seed_sync_run(clean_db)
-    await _seed_ipv4(clean_db, run_id, rir="ripe", start="193.0.0.0", value=256)
-    await _seed_inetnum(clean_db, run_id, rir="ripe", start="193.0.0.0", value=256)
-    await _seed_organisation(clean_db, run_id, rir="ripe", org_handle="ORG-RIEN1-RIPE")
+    await _seed_ipv4(clean_db, run_id, rir="ripencc", start="193.0.0.0", value=256)
+    await _seed_inetnum(clean_db, run_id, rir="ripencc", start="193.0.0.0", value=256)
+    await _seed_organisation(clean_db, run_id, rir="ripencc", org_handle="ORG-RIEN1-RIPE")
 
     response = await api_client.get("/v1/ip/193.0.0.5?include_rpsl=false")
     assert response.status_code == 200
@@ -605,9 +605,9 @@ async def test_asn_lookup_with_rpsl_aut_num_and_org(
 ) -> None:
     """AS3333 → aut_num + organisation в rpsl."""
     run_id = await _seed_sync_run(clean_db)
-    await _seed_asn(clean_db, run_id, rir="ripe", start_asn=3333, count=1)
-    await _seed_aut_num(clean_db, run_id, rir="ripe", asn=3333)
-    await _seed_organisation(clean_db, run_id, rir="ripe", org_handle="ORG-RIEN1-RIPE")
+    await _seed_asn(clean_db, run_id, rir="ripencc", start_asn=3333, count=1)
+    await _seed_aut_num(clean_db, run_id, rir="ripencc", asn=3333)
+    await _seed_organisation(clean_db, run_id, rir="ripencc", org_handle="ORG-RIEN1-RIPE")
 
     response = await api_client.get("/v1/asn/3333")
     assert response.status_code == 200
@@ -623,12 +623,12 @@ async def test_ip_lookup_picks_most_specific_inetnum(
 ) -> None:
     """Два overlapping inetnum: /16 и /24 — отвечаем /24."""
     run_id = await _seed_sync_run(clean_db)
-    await _seed_ipv4(clean_db, run_id, rir="ripe", start="193.0.0.0", value=65536)  # /16
+    await _seed_ipv4(clean_db, run_id, rir="ripencc", start="193.0.0.0", value=65536)  # /16
     await _seed_inetnum(
-        clean_db, run_id, rir="ripe", start="193.0.0.0", value=65536, netname="RIPE-WIDE"
+        clean_db, run_id, rir="ripencc", start="193.0.0.0", value=65536, netname="RIPE-WIDE"
     )
     await _seed_inetnum(
-        clean_db, run_id, rir="ripe", start="193.0.0.0", value=256, netname="RIPE-NARROW"
+        clean_db, run_id, rir="ripencc", start="193.0.0.0", value=256, netname="RIPE-NARROW"
     )
 
     response = await api_client.get("/v1/ip/193.0.0.5")
@@ -643,9 +643,9 @@ async def test_ip_lookup_orphan_org_handle(
 ) -> None:
     """inetnum.org указывает на org_handle, которого нет в organisation."""
     run_id = await _seed_sync_run(clean_db)
-    await _seed_ipv4(clean_db, run_id, rir="ripe", start="193.0.0.0", value=256)
+    await _seed_ipv4(clean_db, run_id, rir="ripencc", start="193.0.0.0", value=256)
     await _seed_inetnum(
-        clean_db, run_id, rir="ripe", start="193.0.0.0", value=256, org="ORG-NONEXISTENT-RIPE"
+        clean_db, run_id, rir="ripencc", start="193.0.0.0", value=256, org="ORG-NONEXISTENT-RIPE"
     )
     # никакой organisation
 
