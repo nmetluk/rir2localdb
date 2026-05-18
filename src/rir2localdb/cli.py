@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import importlib.resources
 import json
+from dataclasses import asdict
 from typing import Annotated, Any
 
 import alembic.command
@@ -20,11 +21,12 @@ import typer
 from rich.console import Console
 from rich.table import Table
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from rir2localdb.config import Settings, get_settings
 from rir2localdb.logging_setup import configure_logging
 from rir2localdb.sources import Tier
+from rir2localdb.sync.gc import GcStats, run_gc
 from rir2localdb.sync.orchestrator import SyncRunSummary, run_sync
 
 app = typer.Typer(
@@ -126,12 +128,31 @@ def serve(
 
 
 @app.command()
-def gc() -> None:
-    """Cleanup stale rows (placeholder, реализация — Stage 3 ops)."""
-    typer.echo(
-        "gc: placeholder. Stale-row cleanup is planned for Stage 3 ops; "
-        "in Stage 1 stale rows just stay with an older `last_seen_run`."
-    )
+def gc(
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Показать что было бы помечено, без записи (rollback в конце).",
+        ),
+    ] = False,
+) -> None:
+    """Mark stale records (не появлявшиеся в N последних success-sync'ах).
+
+    Запускается **автоматически** после успешного ``rir2localdb sync``
+    в той же транзакции — этой команды обычно не нужно. Используйте её
+    для:
+    - manual diagnostic через ``--dry-run`` (JSON-сводка без записи);
+    - повторного маркировки после изменения ``gc_grace_runs`` в .env.
+
+    Подробности policy — `docs/04-sync-pipeline.md` § «GC and stale records».
+    """
+    settings = get_settings()
+    configure_logging(level=settings.log_level, json_format=settings.log_format == "json")
+    stats = asyncio.run(_gc_impl(settings, dry_run=dry_run))
+    typer.echo(json.dumps(asdict(stats), indent=2, default=str))
+    if dry_run:
+        typer.echo("\n[dry-run] no changes persisted.")
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +203,29 @@ def _print_summary(summary: SyncRunSummary, *, dry_run: bool) -> None:
     typer.echo(f"  duration: {summary.duration_ms} ms")
     if summary.error:
         typer.echo(f"  error: {summary.error}", err=True)
+
+
+async def _gc_impl(settings: Settings, *, dry_run: bool) -> GcStats:
+    """Open engine + session, ``run_gc`` в её транзакции, commit or rollback.
+
+    Закрывает engine после; sessionmaker per-call (CLI — short-lived).
+    """
+    engine = create_async_engine(settings.database_url)
+    try:
+        async with engine.connect() as conn:
+            txn = await conn.begin()
+            try:
+                session_maker = async_sessionmaker(bind=conn, expire_on_commit=False)
+                async with session_maker() as session:
+                    stats = await run_gc(session, settings)
+            finally:
+                if dry_run:
+                    await txn.rollback()
+                else:
+                    await txn.commit()
+        return stats
+    finally:
+        await engine.dispose()
 
 
 async def _collect_status(settings: Settings) -> dict[str, Any]:
