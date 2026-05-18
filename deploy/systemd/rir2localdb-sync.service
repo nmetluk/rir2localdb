@@ -12,6 +12,11 @@ Group=rir2local
 WorkingDirectory=/home/rir2local/rir2localdb
 ExecStart=/home/rir2local/rir2localdb/.venv/bin/rir2localdb sync --tier core --tier rich
 
+# Production-режим логов: single-line JSON per event через structlog.
+# Парсится через `journalctl -u ... -o cat | jq`.
+Environment=RIR2LOCALDB_LOG_FORMAT=json
+Environment=RIR2LOCALDB_LOG_LEVEL=INFO
+
 # Журналирование
 StandardOutput=journal
 StandardError=journal
