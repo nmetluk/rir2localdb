@@ -31,7 +31,10 @@
   - **3-01** ✅ systemd timer + service (daily sync 03:00 UTC,
     hardened sandbox, live install на сервере, 2026-05-18).
     `03-01-systemd-timer.md`.
-  - 3-02 ⏳ Prometheus `/metrics` + structured JSON logs.
+  - **3-02** ✅ Prometheus `/v1/metrics` + structured JSON logs
+    через structlog (2026-05-18). `03-02-metrics-and-structured-logs.md`.
+    Заодно поймал и пофиксил `now()` → `clock_timestamp()` для
+    sync_run.finished_at.
   - 3-03 ⏳ Stale-records GC.
   - 3-04 ⏳ Dockerfile + compose.
   - 3-05 ⏳ RDAP fallback (опц.).
