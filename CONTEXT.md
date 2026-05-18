@@ -27,7 +27,16 @@
   (2026-05-18). `02-99-stage-2-closed.md`.
 - **Stage 2.50** ✅ RPSL coverage до 11 типов + `rir` normalization
   + CONTEXT cleanup (2026-05-18). `02-50-rpsl-completeness-and-cleanup.md`.
-- **Stage 3** ⏳ Production ops (планируется).
+- **Stage 3** в работе.
+  - **3-01** ✅ systemd timer + service (daily sync 03:00 UTC,
+    hardened sandbox, live install на сервере, 2026-05-18).
+    `03-01-systemd-timer.md`.
+  - 3-02 ⏳ Prometheus `/metrics` + structured JSON logs.
+  - 3-03 ⏳ Stale-records GC.
+  - 3-04 ⏳ Dockerfile + compose.
+  - 3-05 ⏳ RDAP fallback (опц.).
+  - 3-06 ⏳ Grafana + alerts.
+  - 3-07 ⏳ API mntner/person/as_set (опц.).
 
 ## Текущие цифры
 
